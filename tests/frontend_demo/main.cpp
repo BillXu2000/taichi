@@ -8,6 +8,10 @@
 #include <cassert>
 #include "expr.h"
 
+#include "taichi/ir/ir_builder.h"
+#include "taichi/ir/statements.h"
+
+
 std::vector<std::unique_ptr<Token> > get_lexical(std::string plain, std::set<std::string> &names, std::set<std::string> reserved_funcs) {
     using namespace std;
     vector<unique_ptr<Token> > lex;
@@ -154,6 +158,31 @@ void init_IR(std::fstream &fs, std::set<std::string> &names) {
 "def generated_ir(x, y):\n";
 }
 
+void dummy_IR(std::unique_ptr<Expr> &i, std::fstream &fs, int &cnt) {
+    using namespace std;
+    auto p = i.get();
+    auto bin = dynamic_cast<BinOp*>(p);
+    auto unary = dynamic_cast<UnaryOp*>(p);
+    if (bin) {
+        dummy_IR(bin->left, fs, cnt);
+        dummy_IR(bin->right, fs, cnt);
+        p->ssa = cnt++;
+        //fs << "\tssa[" + to_string(bin->ssa) + "] = ssa[" + to_string(bin->left->ssa) + "] " + bin->op->to_string() + " ssa[" + to_string(bin->right->ssa) + "]\n";
+        fs << "\tssa" + to_string(bin->ssa) + " = ssa" + to_string(bin->left->ssa) + " " + bin->op->to_string() + " ssa" + to_string(bin->right->ssa) + "\n";
+    }
+    else if (unary) {
+        dummy_IR(unary->operand, fs, cnt);
+        p->ssa = cnt++;
+        //fs << "\tssa[" + to_string(unary->ssa) + "] = " + unary->op->to_string() + "(ssa[" + to_string(unary->operand->ssa) + "])\n";
+        fs << "\tssa" + to_string(unary->ssa) + " = " + unary->op->to_string() + "(ssa" + to_string(unary->operand->ssa) + ")\n";
+    }
+    else {
+        p->ssa = cnt++;
+        //fs << "\tssa[" + to_string(p->ssa) + "] = " + dynamic_cast<Literal*>(p)->value->to_string() + "\n";
+        fs << "\tssa" + to_string(p->ssa) + " = " + dynamic_cast<Literal*>(p)->value->to_string() + "\n";
+    }
+}
+
 void build_IR(std::unique_ptr<Expr> &i, std::fstream &fs, int &cnt) {
     using namespace std;
     auto p = i.get();
@@ -179,9 +208,23 @@ void build_IR(std::unique_ptr<Expr> &i, std::fstream &fs, int &cnt) {
     }
 }
 
+void IRtest() {
+    using namespace taichi::lang;
+    IRBuilder builder;
+    auto *one = builder.get_float32(1);
+    auto *two = builder.get_float32(2);
+    auto *add = builder.create_add(one, two);
+    auto *ret = builder.create_return(add);
+    auto &program = get_current_program()
+    auto ker = std::make_unique<Kernel>(builder.hack(), ret, "");
+    launch_ctx.set_arg_raw(0, operand.val_u64);
+    auto &current_program = stmt->get_kernel()->program;
+    (*ker)(launch_ctx);
+    ret.val_i64 = current_program.fetch_result<float>(0);
+}
 
 int main(int argc, char* argv[]) {
-    std::fstream fs(argv[1], std::fstream::in);
+    /*std::fstream fs(argv[1], std::fstream::in);
     std::string plain;
     for (char ch; fs.get(ch); plain += ch);
     fs.close();
@@ -198,8 +241,10 @@ int main(int argc, char* argv[]) {
     fs.open(argv[2], std::fstream::out);
     init_IR(fs, names);
     int cnt = 0;
-    build_IR(root, fs, cnt);
+    dummy_IR(root, fs, cnt);
     //fs << "\treturn ssa[" + std::to_string(cnt - 1) + "]";
-    fs << "\treturn ssa" + std::to_string(cnt - 1) + "";
+    fs << "\treturn ssa" + std::to_string(cnt - 1) + "";*/
+    IRtest();
     return 0;
 }
+
