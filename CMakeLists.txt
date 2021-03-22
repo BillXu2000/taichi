@@ -83,3 +83,9 @@ FILE(WRITE ${CMAKE_CURRENT_LIST_DIR}/taichi/common/version.h
         "#define TI_VERSION_PATCH \"${TI_VERSION_PATCH}\"\n"
         "#define TI_CUDAVERSION \"${CUDA_VERSION}\"\n"
         )
+
+option(TI_FRONTEND_DEMO "Build frontend demo" OFF)
+
+if (TI_FRONTEND_DEMO)
+  include(cmake/FrontendDemo.cmake)
+endif()
