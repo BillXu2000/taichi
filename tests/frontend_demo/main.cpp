@@ -10,6 +10,8 @@
 
 #include "taichi/ir/ir_builder.h"
 #include "taichi/ir/statements.h"
+#include "taichi/program/program.h"
+#include "taichi/ir/ir.h"
 
 
 std::vector<std::unique_ptr<Token> > get_lexical(std::string plain, std::set<std::string> &names, std::set<std::string> reserved_funcs) {
@@ -183,48 +185,66 @@ void dummy_IR(std::unique_ptr<Expr> &i, std::fstream &fs, int &cnt) {
     }
 }
 
-void build_IR(std::unique_ptr<Expr> &i, std::fstream &fs, int &cnt) {
-    using namespace std;
+taichi::lang::Stmt* build_IR(std::unique_ptr<Expr> &i, taichi::lang::IRBuilder &builder) {
+    using namespace taichi::lang;
     auto p = i.get();
     auto bin = dynamic_cast<BinOp*>(p);
     auto unary = dynamic_cast<UnaryOp*>(p);
     if (bin) {
-        build_IR(bin->left, fs, cnt);
-        build_IR(bin->right, fs, cnt);
-        p->ssa = cnt++;
-        //fs << "\tssa[" + to_string(bin->ssa) + "] = ssa[" + to_string(bin->left->ssa) + "] " + bin->op->to_string() + " ssa[" + to_string(bin->right->ssa) + "]\n";
-        fs << "\tssa" + to_string(bin->ssa) + " = ssa" + to_string(bin->left->ssa) + " " + bin->op->to_string() + " ssa" + to_string(bin->right->ssa) + "\n";
+        auto *lhs = build_IR(bin->left, builder);
+        auto *rhs = build_IR(bin->right, builder);
+        auto *op = bin->op.get();
+        if (dynamic_cast<Add*>(op)) return builder.create_add(lhs, rhs);
+        if (dynamic_cast<Sub*>(op)) return builder.create_sub(lhs, rhs);
+        if (dynamic_cast<Mult*>(op)) return builder.create_mul(lhs, rhs);
+        if (dynamic_cast<Div*>(op)) return builder.create_div(lhs, rhs);
     }
     else if (unary) {
-        build_IR(unary->operand, fs, cnt);
-        p->ssa = cnt++;
-        //fs << "\tssa[" + to_string(unary->ssa) + "] = " + unary->op->to_string() + "(ssa[" + to_string(unary->operand->ssa) + "])\n";
-        fs << "\tssa" + to_string(unary->ssa) + " = " + unary->op->to_string() + "(ssa" + to_string(unary->operand->ssa) + ")\n";
+        auto *operand = build_IR(unary->operand, builder);
+        auto *op = dynamic_cast<UnaryToken*>(unary->op.get());
+        if (op->name == "-") return builder.create_neg(operand);
+        if (op->name == "sin") return builder.create_sin(operand);
+        if (op->name == "cos") return builder.create_cos(operand);
     }
     else {
-        p->ssa = cnt++;
-        //fs << "\tssa[" + to_string(p->ssa) + "] = " + dynamic_cast<Literal*>(p)->value->to_string() + "\n";
-        fs << "\tssa" + to_string(p->ssa) + " = " + dynamic_cast<Literal*>(p)->value->to_string() + "\n";
+        std::string name = dynamic_cast<Literal*>(p)->value->to_string();
+        if (name == "x" || name == "y") return builder.create_arg_load(name[0] - 'x', PrimitiveType::f32, false);
+        else return builder.get_float32(atof(name.c_str()));
     }
+    return nullptr;
 }
 
-void IRtest() {
+void run_builder(taichi::lang::IRBuilder &builder) {
     using namespace taichi::lang;
-    IRBuilder builder;
-    auto *one = builder.get_float32(1);
-    auto *two = builder.get_float32(2);
-    auto *add = builder.create_add(one, two);
-    auto *ret = builder.create_return(add);
-    auto &program = get_current_program()
-    auto ker = std::make_unique<Kernel>(builder.hack(), ret, "");
-    launch_ctx.set_arg_raw(0, operand.val_u64);
-    auto &current_program = stmt->get_kernel()->program;
+    auto prog_ = Program(arch_from_name("x64"));
+    CompileConfig config_print_ir;
+    config_print_ir.print_ir = true;
+    prog_.config = config_print_ir;
+    prog_.materialize_layout();
+    auto ker = std::make_unique<Kernel>(prog_, builder.extract_ir());
+    auto launch_ctx = ker->make_launch_context();
+    ker->insert_arg(PrimitiveType::f32, false);
+    ker->insert_arg(PrimitiveType::f32, false);
+    std::fstream fs("./512.out", std::fstream::out);
+    const int N = 512;
+    for (int i = 0; i < N; i++) {
+        double x = double(i) / N;
+        for (int j = 0; j < N; j++) {
+            double y = double(j) / N;
+            launch_ctx.set_arg_float(0, x);
+            launch_ctx.set_arg_float(1, y);
+            (*ker)(launch_ctx);
+            fs << prog_.fetch_result<float>(0) << "\n";
+        }
+    }
+    /*launch_ctx.set_arg_float(0, 2);
+    launch_ctx.set_arg_float(1, 3);
     (*ker)(launch_ctx);
-    ret.val_i64 = current_program.fetch_result<float>(0);
+    fs << prog_.fetch_result<float>(0) << "\n";*/
 }
 
 int main(int argc, char* argv[]) {
-    /*std::fstream fs(argv[1], std::fstream::in);
+    std::fstream fs(argv[1], std::fstream::in);
     std::string plain;
     for (char ch; fs.get(ch); plain += ch);
     fs.close();
@@ -240,11 +260,13 @@ int main(int argc, char* argv[]) {
     puts("");
     fs.open(argv[2], std::fstream::out);
     init_IR(fs, names);
-    int cnt = 0;
-    dummy_IR(root, fs, cnt);
+    //int cnt = 0;
+    //dummy_IR(root, fs, cnt);
     //fs << "\treturn ssa[" + std::to_string(cnt - 1) + "]";
-    fs << "\treturn ssa" + std::to_string(cnt - 1) + "";*/
-    IRtest();
+    //fs << "\treturn ssa" + std::to_string(cnt - 1) + "";
+    taichi::lang::IRBuilder builder;
+    builder.create_return(build_IR(root, builder));
+    run_builder(builder);
     return 0;
 }
 
