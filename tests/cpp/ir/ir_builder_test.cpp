@@ -2,6 +2,7 @@
 
 #include "taichi/ir/ir_builder.h"
 #include "taichi/ir/statements.h"
+#include "taichi/program/program.h"
 
 namespace taichi {
 namespace lang {
@@ -53,5 +54,39 @@ TEST(IRBuilder, RangeFor) {
   EXPECT_EQ(loopc->body->size(), 1);
   EXPECT_EQ(loopc->body->statements[0].get(), index);
 }
+
+TEST(IRBuilder, RunKernel) {
+    auto prog_ = Program(arch_from_name("x64"));
+    /*CompileConfig config_print_ir;
+    config_print_ir.print_ir = true;
+    prog_.config = config_print_ir;*/  // print ir
+    prog_.materialize_layout();
+    IRBuilder builder;
+    auto *one = builder.get_int32(1);
+    builder.create_return(one);
+    auto block = builder.extract_ir();
+    auto ker = std::make_unique<Kernel>(prog_, std::move(block));
+    auto launch_ctx = ker->make_launch_context();
+    (*ker)(launch_ctx);
+    EXPECT_EQ(prog_.fetch_result<int64_t>(0), 1);
+}
+
+TEST(IRBuilder, RunSnodeKernel) {
+    auto prog_ = Program(arch_from_name("x64"));
+    prog_.materialize_layout();
+    auto root = prog_.snode_root.get();
+    auto &dense = root->dense(Index(0), 10);
+    IRBuilder builder;
+    auto *index = builder.get_int32(1);
+    auto *ptr = builder.insert(std::make_unique<GlobalPtrStmt>(&dense, std::vector<Stmt*>(1, index)));
+    //builder.insert(std::make_unique<GlobalStoreStmt>(ptr, index));
+    builder.create_return(index);
+    auto block = builder.extract_ir();
+    auto ker = std::make_unique<Kernel>(prog_, std::move(block));
+    auto launch_ctx = ker->make_launch_context();
+    (*ker)(launch_ctx);
+    EXPECT_EQ(prog_.fetch_result<int64_t>(0), 1);
+}
+
 }  // namespace lang
 }  // namespace taichi
