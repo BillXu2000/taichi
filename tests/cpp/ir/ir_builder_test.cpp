@@ -76,9 +76,12 @@ TEST(IRBuilder, RunSnodeKernel) {
     prog_.materialize_layout();
     auto root = prog_.snode_root.get();
     auto &dense = root->dense(Index(0), 10);
+    auto &place = dense.insert_children(SNodeType::place);
+    place.dt = PrimitiveType::f32;
     IRBuilder builder;
     auto *index = builder.get_int32(1);
-    auto *ptr = builder.insert(std::make_unique<GlobalPtrStmt>(&dense, std::vector<Stmt*>(1, index)));
+    //auto *ptr = builder.insert(std::make_unique<GlobalPtrStmt>(&dense, std::vector<Stmt*>(1, index)));
+    auto *ptr = builder.insert(Stmt::make<GlobalPtrStmt>(LaneAttribute<SNode *>(&place), std::vector<Stmt*>(1, index)));
     //builder.insert(std::make_unique<GlobalStoreStmt>(ptr, index));
     builder.create_return(index);
     auto block = builder.extract_ir();
