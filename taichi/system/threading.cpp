@@ -70,8 +70,6 @@ void ThreadPool::run(int splits,
                      int desired_num_threads,
                      void *range_for_task_context,
                      RangeForTaskFunc *func) {
-  //printf("desired = %d, max = %d", desired_num_threads, max_num_threads);
-  desired_num_threads = 4;
   {
     std::lock_guard _(mutex);
     this->range_for_task_context = range_for_task_context;

@@ -264,7 +264,7 @@ void test_snode() {
     IRBuilder builder;
     auto *zero = builder.get_int32(0);
     auto *ten = builder.get_int32(10);
-    auto *loop = builder.create_range_for(zero, ten, 1);
+    auto *loop = builder.create_range_for(zero, ten, 1, 0, 4);
     {
         builder.set_insertion_point_to_loop_begin(loop);
         auto *index = builder.get_loop_index(loop, 0);
@@ -369,13 +369,13 @@ int main(int argc, char* argv[]) {
         auto *zero = builder.get_int32(0);
         auto *width = builder.get_int32(W);
         auto *height = builder.get_int32(H);
-        auto *loopx = builder.create_range_for(zero, width, 1);
+        auto *loopx = builder.create_range_for(zero, width, 1, 0, 4);
         {
             builder.set_insertion_point_to_loop_begin(loopx);
             auto *index_x = builder.get_loop_index(loopx, 0);
             auto *x = builder.create_div(builder.create_cast(index_x, PrimitiveType::f32),
                 builder.create_cast(width, PrimitiveType::f32));
-            auto *loopy = builder.create_range_for(zero, height, 1);
+            auto *loopy = builder.create_range_for(zero, height, 1, 0, 4);
             {
                 builder.set_insertion_point_to_loop_begin(loopy);
                 auto *index_y = builder.get_loop_index(loopy, 0);
