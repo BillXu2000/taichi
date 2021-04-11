@@ -239,7 +239,7 @@ void run_builder(taichi::lang::IRBuilder &builder) {
             fs << prog_.fetch_result<float>(0) << "\n";
         }
     }*/
-    /*launch_ctx.set_arg_float(0, 2);
+    /*launch_ctx.w_float(0, 2);
     launch_ctx.set_arg_float(1, 3);
     (*ker)(launch_ctx);
     fs << prog_.fetch_result<float>(0) << "\n";*/
@@ -316,12 +316,100 @@ void test_exptr() {
     //std::cout << int(tmp[0]) << " : int tmp[0]\n";
     exit(0);
 }
+
+class GradInfoChiPrimal final : public SNode::GradInfoProvider {
+public:
+    SNode &grad;
+    explicit GradInfoChiPrimal(SNode &_grad): grad(_grad) {}
+    bool is_primal() const override { return true; }
+    SNode *grad_snode() const override { return &grad; }
+};
+
+class GradInfoChiAdjoint final : public SNode::GradInfoProvider {
+public:
+    explicit GradInfoChiAdjoint() {}
+    bool is_primal() const override { return false; }
+    SNode *grad_snode() const override { return nullptr; }
+};
+
+void test_auto_diff() {
+    auto prog_ = Program(arch_from_name("x64"));
+    //prog_.thread_pool = std::make_unique<ThreadPool>(1);
+    CompileConfig config_print_ir;
+    config_print_ir.print_ir = true;
+    prog_.config = config_print_ir;  // print ir
+    auto root = prog_.snode_root.get();
+
+    auto grad_snode = [&](Index index, int size) -> SNode&& {
+        auto &snode = root->dense(index, size).insert_children(SNodeType::place);
+        snode.dt = PrimitiveType::f32;
+        snode.grad_info = std::make_unique<GradInfoChiPrimal>(root->dense(index, size).insert_children(SNodeType::place));
+        snode.get_grad()->dt = PrimitiveType::f32;
+        snode.get_grad()->grad_info = std::make_unique<GradInfoChiAdjoint>();
+        return std::move(snode);
+    };
+    auto &&energy = grad_snode(0, 1);
+    auto &&x = grad_snode(0, 2);
+    prog_.materialize_layout();
+
+    {  // init
+      IRBuilder builder;
+      builder.create_global_store(
+          builder.create_global_ptr(
+              &x, std::vector<Stmt *>(1, builder.get_int32(0))),
+          builder.get_int32(7));
+      builder.create_global_store(
+          builder.create_global_ptr(
+              &x, std::vector<Stmt *>(1, builder.get_int32(1))),
+          builder.get_int32(23));
+      builder.create_global_store(
+          builder.create_global_ptr(
+              energy.get_grad(), std::vector<Stmt *>(1, builder.get_int32(1))),
+          builder.get_int32(1));
+
+      auto ker = std::make_unique<Kernel>(prog_, builder.extract_ir());
+      auto launch_ctx = ker->make_launch_context();
+      (*ker)(launch_ctx);
+    }
+    {  // grad
+      IRBuilder builder;
+      auto *dst = builder.create_global_ptr(
+          &energy, std::vector<Stmt *>(1, builder.get_int32(0)));
+      auto *val_0 = builder.create_global_load(builder.create_global_ptr(
+          &x, std::vector<Stmt *>(1, builder.get_int32(0))));
+      auto *val_1 = builder.create_global_load(builder.create_global_ptr(
+          &x, std::vector<Stmt *>(1, builder.get_int32(1))));
+      auto *val = builder.create_mul(val_0, val_1);
+      builder.insert(
+          std::make_unique<AtomicOpStmt>(AtomicOpType::add, dst, val));
+
+      auto block = builder.extract_ir();
+      auto ker =
+          std::make_unique<Kernel>(prog_, std::move(block), "auto_diff", true);
+      // auto ker = std::make_unique<Kernel>(prog_, std::move(block));
+      auto launch_ctx = ker->make_launch_context();
+      (*ker)(launch_ctx);
+    }
+    {  // output
+      IRBuilder builder;
+      builder.create_return(
+          builder.create_global_load(builder.create_global_ptr(
+              x.get_grad(), std::vector<Stmt *>(1, builder.get_int32(0)))));
+
+      auto ker = std::make_unique<Kernel>(prog_, builder.extract_ir());
+      auto launch_ctx = ker->make_launch_context();
+      (*ker)(launch_ctx);
+      printf("ans = %lf\n", prog_.fetch_result<float>(0));
+    }
+    exit(0);
+}
 }  // namespace lang
 }  // namespace taichi
 
 int main(int argc, char* argv[]) {
     //taichi::lang::test_snode();
     //taichi::lang::test_exptr();
+    taichi::lang::test_auto_diff();
     std::fstream fs(argv[1], std::fstream::in);
     std::string plain;
     for (char ch; fs.get(ch); plain += ch);
