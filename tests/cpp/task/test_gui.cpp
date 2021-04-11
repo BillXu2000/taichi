@@ -6,22 +6,9 @@
 TI_NAMESPACE_BEGIN
 
 auto test_gui = []() {
-  //GUI gui("GUI Test", 1000, 400, false);
-  int n = 1000, m = 400;
-  GUI gui("GUI Test", n, m, true, false, 0, false, false);
+  GUI gui("GUI Test", 1000, 400, false);
   auto canvas = *gui.canvas;
-  real blue = 0;
-  gui.slider("Blue", blue, 0.0_f, 1.0_f);
-  while (1) {
-    for (int i = 0; i < n; i++) {
-      for (int j = 0; j < m; j++) {
-        std::array<real, 4> tmp{real(j / 400.0), i * (1 - blue) / 1000, i * blue / 1000, 255};
-        canvas.img[i][j] = Vector4(tmp);
-      }
-    }
-    gui.update();
-  }
-  /*real t = 0;
+  real t = 0;
 
   int circle_count = 10;
   gui.button("ABC", [] { TI_INFO("Triggered"); });
@@ -54,7 +41,7 @@ auto test_gui = []() {
           .finish();
     }
     gui.update();
-  }*/
+  }
 };
 
 TI_REGISTER_TASK(test_gui);

@@ -555,23 +555,32 @@ int main(int argc, char* argv[]) {
                 auto guard_y = builder.get_loop_guard(loopy); 
                 auto *index_y = builder.get_loop_index(loopy, 0);
                 std::vector<Stmt*> indices = {index_x, index_y};
-                auto ans = builder.create_global_load(builder.create_global_ptr(&place, indices));
+                auto *index = builder.create_add(builder.create_mul(index_x, height), index_y);
                 //auto ans = builder.create_global_load(builder.create_global_ptr(matrix_x.get_grad(), indices));
-                { // external
-                    auto *index = builder.create_add(builder.create_mul(index_x, height), index_y);
-                    builder.create_global_store(
-                        builder.create_external_ptr(
-                            builder.create_arg_load(0, PrimitiveType::f32,
-                                                    true),
-                            std::vector<Stmt *>(1, index)),
-                        ans);
-                }
+                auto ans = builder.create_global_load(builder.create_global_ptr(&place, indices));
+                builder.create_global_store(
+                    builder.create_external_ptr(
+                        builder.create_arg_load(0, PrimitiveType::f32, true),
+                        std::vector<Stmt *>(1, index)),
+                    ans);
+                auto grad_x = builder.create_global_load(builder.create_global_ptr(matrix_x.get_grad(), indices));
+                builder.create_global_store(
+                    builder.create_external_ptr(
+                        builder.create_arg_load(1, PrimitiveType::f32, true),
+                        std::vector<Stmt *>(1, index)),
+                    grad_x);
+                auto grad_y = builder.create_global_load(builder.create_global_ptr(matrix_y.get_grad(), indices));
+                builder.create_global_store(
+                    builder.create_external_ptr(
+                        builder.create_arg_load(2, PrimitiveType::f32, true),
+                        std::vector<Stmt *>(1, index)),
+                    grad_y);
             }
           }
           ker_output = std::make_unique<Kernel>(program, builder.extract_ir());
+          for (int i = 0; i < 3; i++) ker_output->insert_arg(PrimitiveType::gen, true);
         }
-        ker_output->insert_arg(PrimitiveType::gen, true);
-        static float ans[W][H];
+        static float ans[W][H], grad_x[W][H], grad_y[W][H];
         taichi::GUI gui("GUI Test", W, H, true, false, 0, false, false);
         auto canvas = *gui.canvas;
         taichi::real args[names.size()];
@@ -588,7 +597,7 @@ int main(int argc, char* argv[]) {
         auto ctx_output = ker_output->make_launch_context();
         while (1) {
             (*ker_init)(ctx_init);
-            launch_ctx.set_arg_nparray(0, taichi::uint64(ans), W * H / 4);
+            launch_ctx.set_arg_nparray(0, taichi::uint64(ans), 0);
             {
                 int i = 0;
                 for (auto name : names) {
@@ -597,7 +606,7 @@ int main(int argc, char* argv[]) {
                 }
             } 
             (*ker)(launch_ctx);
-            ctx_grad.set_arg_nparray(0, taichi::uint64(ans), W * H / 4);
+            ctx_grad.set_arg_nparray(0, taichi::uint64(ans), 0);
             {
                 int i = 0;
                 for (auto name : names) {
@@ -606,12 +615,15 @@ int main(int argc, char* argv[]) {
                 }
             }
             (*ker_grad)(ctx_grad);
-            ctx_output.set_arg_nparray(0, taichi::uint64(ans), W * H / 4);
+            ctx_output.set_arg_nparray(0, taichi::uint64(ans), 0);
+            ctx_output.set_arg_nparray(1, taichi::uint64(grad_x), 0);
+            ctx_output.set_arg_nparray(2, taichi::uint64(grad_y), 0);
             (*ker_output)(ctx_output);
             for (int i = 0; i < W; i++) {
                 for (int j = 0; j < H; j++) {
                     float r = 0, g = 0, b = 0;
                     double tmp = ans[i][j] * 256;
+                    //double tmp = (grad_y[i][j] - grad_x[i][j]) * 256;
                     if (tmp < 32) b = 128 + tmp * 4;
                     else if (tmp < 96) b = 255;
                     else if (tmp < 159) b = 254 - (tmp - 96) * 4;
@@ -629,6 +641,24 @@ int main(int argc, char* argv[]) {
                     std::array<taichi::real, 4> color{r, g, b, 1};
                     //std::array<taichi::real, 4> tmp{0, (float)(i + j) / W, 0, 255};
                     canvas.img[i][j] = taichi::Vector4(color);
+                }
+            }
+            for (int i = 0; i < W; i += 32) {
+                for (int j = 0; j < H; j += 32) {
+                    using namespace taichi;
+                    float k = 5, a = 0.2, w = 2, arrow_k = 0.8;
+                    auto off = Vector2(grad_x[i][j] * k, grad_y[i][j] * k);
+                    auto left = Vector2(off[0] * std::cos(a) - off[1] * std::sin(a),
+                                off[0] * std::sin(a) + off[1] * std::cos(a)) * arrow_k;
+                    auto right = Vector2(off[0] * std::cos(-a) - off[1] * std::sin(-a),
+                                off[0] * std::sin(-a) + off[1] * std::cos(-a)) * arrow_k;
+                    auto src = Vector2(i, j);
+                    canvas.path(src, src + off)
+                        .close().color(0, 0, 0).width(w).finish();
+                    canvas.path(src + off, src + left)
+                        .close().color(0, 0, 0).width(w).finish();
+                    canvas.path(src + off, src + right)
+                        .close().color(0, 0, 0).width(w).finish();
                 }
             }
             gui.update();
