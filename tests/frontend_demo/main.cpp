@@ -490,33 +490,73 @@ int main(int argc, char* argv[]) {
           ker_init = std::make_unique<Kernel>(program, builder.extract_ir());
         }
 
-        IRBuilder builder;
-        std::map<std::string, Stmt*> para;
-        {
-            int i = 0;
-            for (auto name : names) {
-                para[name] = builder.create_arg_load(i + 1, PrimitiveType::f32, false); // arg 0 is canvas
-                i++;
+        auto get_main_ir = [&](bool grad) -> auto {
+            IRBuilder builder;
+            std::map<std::string, Stmt*> para;
+            {
+                int i = 0;
+                for (auto name : names) {
+                    para[name] = builder.create_arg_load(i + 1, PrimitiveType::f32, false); // arg 0 is canvas
+                    i++;
+                }
             }
-        }
-        auto *zero = builder.get_int32(0);
-        auto *width = builder.get_int32(W);
-        auto *height = builder.get_int32(H);
-        auto *loopx = builder.create_range_for(zero, width, 1, 0, thread_num);
-        {
+            auto *zero = builder.get_int32(0);
+            auto *width = builder.get_int32(W);
+            auto *height = builder.get_int32(H);
+            auto *loopx = builder.create_range_for(zero, width, 1, 0, thread_num);
+            {
+                auto guard_x = builder.get_loop_guard(loopx);
+                auto *index_x = builder.get_loop_index(loopx, 0);
+                auto *loopy = builder.create_range_for(zero, height, 1, 0, thread_num);
+                {
+                    auto guard_y = builder.get_loop_guard(loopy);
+                    auto *index_y = builder.get_loop_index(loopy, 0);
+                    std::vector<Stmt*> indices = {index_x, index_y};
+                    para["x"] = builder.create_global_load(builder.create_global_ptr(&matrix_x, indices));
+                    para["y"] = builder.create_global_load(builder.create_global_ptr(&matrix_y, indices));
+                    auto *ans = build_IR(ast_root, builder, para);
+                    { // snode
+                        builder.create_global_store(builder.create_global_ptr(&place, indices), ans);
+                    }
+                    /*{ // external
+                        auto *index = builder.create_add(builder.create_mul(index_x, height), index_y);
+                        builder.create_global_store(
+                            builder.create_external_ptr(
+                                builder.create_arg_load(0, PrimitiveType::f32,
+                                                        true),
+                                std::vector<Stmt *>(1, index)),
+                            ans);
+                    }*/
+                }
+            }
+            auto ker = new Kernel(program, builder.extract_ir(), "main", grad);
+            ker->insert_arg(PrimitiveType::gen, true);
+            for (auto name : names) {
+                ker->insert_arg(PrimitiveType::f32, false);
+            }
+            return ker;
+        };
+        auto ker = std::unique_ptr<Kernel>(get_main_ir(false));
+        auto ker_grad = std::unique_ptr<Kernel>(get_main_ir(true));
+        auto launch_ctx = ker->make_launch_context();
+        std::unique_ptr<Kernel> ker_output;
+        {  // output
+          IRBuilder builder;
+          auto *zero = builder.get_int32(0);
+          auto *width = builder.get_int32(W);
+          auto *height = builder.get_int32(H);
+          auto *loopx = builder.create_range_for(zero, width, 1, 0, thread_num);
+          {
             auto guard_x = builder.get_loop_guard(loopx);
             auto *index_x = builder.get_loop_index(loopx, 0);
-            auto *loopy = builder.create_range_for(zero, height, 1, 0, thread_num);
-            {
-                auto guard_y = builder.get_loop_guard(loopy);
+            auto *loopy =
+                builder.create_range_for(zero, height, 1, 0, thread_num);
+            { 
+                auto guard_y = builder.get_loop_guard(loopy); 
                 auto *index_y = builder.get_loop_index(loopy, 0);
                 std::vector<Stmt*> indices = {index_x, index_y};
-                para["x"] = builder.create_global_load(builder.create_global_ptr(&matrix_x, indices));
-                para["y"] = builder.create_global_load(builder.create_global_ptr(&matrix_y, indices));
-                auto *ans = build_IR(ast_root, builder, para);
-                { // snode
-                    builder.create_global_store(builder.create_global_ptr(&place, indices), ans);
-                }
+                auto ans = builder.create_global_load(builder.create_global_ptr(&place, indices));
+                //auto ans = builder.create_global_load(builder.create_global_ptr(matrix_x.get_grad(), indices));
                 { // external
                     auto *index = builder.create_add(builder.create_mul(index_x, height), index_y);
                     builder.create_global_store(
@@ -527,15 +567,10 @@ int main(int argc, char* argv[]) {
                         ans);
                 }
             }
+          }
+          ker_output = std::make_unique<Kernel>(program, builder.extract_ir());
         }
-        auto block = builder.extract_ir();
-        auto ker = std::make_unique<Kernel>(program, std::move(block));
-        //auto ker = std::make_unique<Kernel>(program, std::move(block), "main", true);
-        ker->insert_arg(PrimitiveType::gen, true);
-        for (auto name : names) {
-            ker->insert_arg(PrimitiveType::f32, false);
-        }
-        auto launch_ctx = ker->make_launch_context();
+        ker_output->insert_arg(PrimitiveType::gen, true);
         static float ans[W][H];
         taichi::GUI gui("GUI Test", W, H, true, false, 0, false, false);
         auto canvas = *gui.canvas;
@@ -548,9 +583,11 @@ int main(int argc, char* argv[]) {
                 i++;
             }
         }
-        auto init_ctx = ker_init->make_launch_context();
+        auto ctx_init = ker_init->make_launch_context();
+        auto ctx_grad = ker_grad->make_launch_context();
+        auto ctx_output = ker_output->make_launch_context();
         while (1) {
-            (*ker_init)(init_ctx);
+            (*ker_init)(ctx_init);
             launch_ctx.set_arg_nparray(0, taichi::uint64(ans), W * H / 4);
             {
                 int i = 0;
@@ -560,6 +597,17 @@ int main(int argc, char* argv[]) {
                 }
             } 
             (*ker)(launch_ctx);
+            ctx_grad.set_arg_nparray(0, taichi::uint64(ans), W * H / 4);
+            {
+                int i = 0;
+                for (auto name : names) {
+                    ctx_grad.set_arg_float(i + 1, args[i]);
+                    i++;
+                }
+            }
+            (*ker_grad)(ctx_grad);
+            ctx_output.set_arg_nparray(0, taichi::uint64(ans), W * H / 4);
+            (*ker_output)(ctx_output);
             for (int i = 0; i < W; i++) {
                 for (int j = 0; j < H; j++) {
                     float r = 0, g = 0, b = 0;
