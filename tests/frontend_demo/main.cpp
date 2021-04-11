@@ -35,7 +35,6 @@ std::vector<std::unique_ptr<Token> > get_lexical(std::string plain, std::set<std
             i = j;
         }
         else if (isalpha(plain[i]) || plain[i] == '_') {
-            printf("i = %d plain = %s\n", i, plain.substr(0, i).c_str());
             assert(!expect_operator);
             int j;
             for (j = i + 1; isalpha(plain[j]) || plain[j] == '_'; j++);
@@ -340,16 +339,16 @@ void test_auto_diff() {
     prog_.config = config_print_ir;  // print ir
     auto root = prog_.snode_root.get();
 
-    auto grad_snode = [&](Index index, int size) -> SNode&& {
+    auto grad_snode = [&](Index index, int size) -> SNode& {
         auto &snode = root->dense(index, size).insert_children(SNodeType::place);
         snode.dt = PrimitiveType::f32;
         snode.grad_info = std::make_unique<GradInfoChiPrimal>(root->dense(index, size).insert_children(SNodeType::place));
         snode.get_grad()->dt = PrimitiveType::f32;
         snode.get_grad()->grad_info = std::make_unique<GradInfoChiAdjoint>();
-        return std::move(snode);
+        return snode;
     };
-    auto &&energy = grad_snode(0, 1);
-    auto &&x = grad_snode(0, 2);
+    auto &energy = grad_snode(0, 1);
+    auto &x = grad_snode(0, 2);
     prog_.materialize_layout();
 
     {  // init
@@ -409,7 +408,7 @@ void test_auto_diff() {
 int main(int argc, char* argv[]) {
     //taichi::lang::test_snode();
     //taichi::lang::test_exptr();
-    taichi::lang::test_auto_diff();
+    //taichi::lang::test_auto_diff();
     std::fstream fs(argv[1], std::fstream::in);
     std::string plain;
     for (char ch; fs.get(ch); plain += ch);
@@ -431,19 +430,65 @@ int main(int argc, char* argv[]) {
     //fs << "\treturn ssa" + std::to_string(cnt - 1) + "";
     {
         using namespace taichi::lang;
-        const int W = 512, H = 512;
-        auto prog_ = Program(arch_from_name("opengl"));
+        const int W = 512, H = 512, thread_num = 8;
+        auto program = Program(arch_from_name("opengl"));
         CompileConfig config_print_ir;
         config_print_ir.print_ir = true;
-        prog_.config = config_print_ir;  // print ir
-        auto root = prog_.snode_root.get();
+        program.config = config_print_ir;  // print ir
+        auto root = program.snode_root.get();
         std::vector<Index> index_dense = {0, 1};
         std::vector<int> size_dense = {W, H};
-        auto &dense = root->dense(index_dense, size_dense);
-        auto &place = dense.insert_children(SNodeType::place);
-        place.dt = PrimitiveType::f32;
-        prog_.materialize_layout();
-
+        auto grad_snode = [&](std::vector<Index> index, std::vector<int> size) -> SNode& {
+            auto &snode = root->dense(index, size).insert_children(SNodeType::place);
+            snode.dt = PrimitiveType::f32;
+            snode.grad_info = std::make_unique<GradInfoChiPrimal>(
+                root->dense(index, size).insert_children(SNodeType::place));
+            snode.get_grad()->dt = PrimitiveType::f32;
+            snode.get_grad()->grad_info = std::make_unique<GradInfoChiAdjoint>();
+            return snode;
+        };
+        auto &place = grad_snode(index_dense, size_dense);
+        auto &matrix_x = grad_snode(index_dense, size_dense);
+        auto &matrix_y = grad_snode(index_dense, size_dense);
+        program.materialize_layout();
+        std::unique_ptr<Kernel> ker_init;
+        {  // init
+          IRBuilder builder;
+          auto *zero = builder.get_int32(0);
+          auto *width = builder.get_int32(W);
+          auto *height = builder.get_int32(H);
+          auto *loopx = builder.create_range_for(zero, width, 1, 0, thread_num);
+          {
+            auto guard_x = builder.get_loop_guard(loopx);
+            auto *index_x = builder.get_loop_index(loopx, 0);
+            auto *x = builder.create_div(
+                builder.create_cast(index_x, PrimitiveType::f32),
+                builder.create_cast(width, PrimitiveType::f32));
+            auto *loopy =
+                builder.create_range_for(zero, height, 1, 0, thread_num);
+            { 
+                auto guard_y = builder.get_loop_guard(loopy); 
+                auto *index_y = builder.get_loop_index(loopy, 0);
+                auto *y = builder.create_div(builder.create_cast(index_y, PrimitiveType::f32),
+                    builder.create_cast(height, PrimitiveType::f32));
+                std::vector<Stmt*> indices = {index_x, index_y};
+                builder.create_global_store(
+                    builder.create_global_ptr(place.get_grad(), indices),
+                    builder.get_float32(1));
+                builder.create_global_store(
+                    builder.create_global_ptr(matrix_x.get_grad(), indices),
+                    builder.get_float32(0));
+                builder.create_global_store(
+                    builder.create_global_ptr(matrix_y.get_grad(), indices),
+                    builder.get_float32(0));
+                builder.create_global_store(
+                    builder.create_global_ptr(&matrix_x, indices), x);
+                builder.create_global_store(
+                    builder.create_global_ptr(&matrix_y, indices), y);
+            }
+          }
+          ker_init = std::make_unique<Kernel>(program, builder.extract_ir());
+        }
 
         IRBuilder builder;
         std::map<std::string, Stmt*> para;
@@ -457,44 +502,35 @@ int main(int argc, char* argv[]) {
         auto *zero = builder.get_int32(0);
         auto *width = builder.get_int32(W);
         auto *height = builder.get_int32(H);
-        auto *loopx = builder.create_range_for(zero, width, 1, 0, 4);
+        auto *loopx = builder.create_range_for(zero, width, 1, 0, thread_num);
         {
-            builder.set_insertion_point_to_loop_begin(loopx);
+            auto guard_x = builder.get_loop_guard(loopx);
             auto *index_x = builder.get_loop_index(loopx, 0);
-            auto *x = builder.create_div(builder.create_cast(index_x, PrimitiveType::f32),
-                builder.create_cast(width, PrimitiveType::f32));
-            auto *loopy = builder.create_range_for(zero, height, 1, 0, 4);
+            auto *loopy = builder.create_range_for(zero, height, 1, 0, thread_num);
             {
-                builder.set_insertion_point_to_loop_begin(loopy);
+                auto guard_y = builder.get_loop_guard(loopy);
                 auto *index_y = builder.get_loop_index(loopy, 0);
-                auto *y = builder.create_div(builder.create_cast(index_y, PrimitiveType::f32),
-                    builder.create_cast(height, PrimitiveType::f32));
-                para["x"] = x;
-                para["y"] = y;
-                auto *ans = build_IR(ast_root, builder, para);
                 std::vector<Stmt*> indices = {index_x, index_y};
+                para["x"] = builder.create_global_load(builder.create_global_ptr(&matrix_x, indices));
+                para["y"] = builder.create_global_load(builder.create_global_ptr(&matrix_y, indices));
+                auto *ans = build_IR(ast_root, builder, para);
                 { // snode
-                    auto *ptr = builder.insert(std::make_unique<GlobalPtrStmt>(&place, indices));
-                    builder.insert(std::make_unique<GlobalStoreStmt>(ptr, ans));
+                    builder.create_global_store(builder.create_global_ptr(&place, indices), ans);
                 }
                 { // external
                     auto *index = builder.create_add(builder.create_mul(index_x, height), index_y);
-                    auto *ext = builder.create_arg_load(0, PrimitiveType::f32, true);
-                    auto *ptr = builder.insert(std::make_unique<ExternalPtrStmt>(ext, std::vector<Stmt*>(1, index)));
-                    builder.insert(std::make_unique<GlobalStoreStmt>(ptr, ans));
+                    builder.create_global_store(
+                        builder.create_external_ptr(
+                            builder.create_arg_load(0, PrimitiveType::f32,
+                                                    true),
+                            std::vector<Stmt *>(1, index)),
+                        ans);
                 }
-                /*{ // tmp 
-                    auto *index = builder.get_int32(1);
-                    auto *arg = builder.create_arg_load(0, PrimitiveType::f32, true);
-                    auto *ptr = builder.insert(std::make_unique<ExternalPtrStmt>(arg, std::vector<Stmt*>(1, index)));
-                    builder.insert(std::make_unique<GlobalStoreStmt>(ptr, width));
-                }*/
-                builder.set_insertion_point_to_after(loopy);
             }
-            builder.set_insertion_point_to_after(loopx);
         }
         auto block = builder.extract_ir();
-        auto ker = std::make_unique<Kernel>(prog_, std::move(block));
+        auto ker = std::make_unique<Kernel>(program, std::move(block));
+        //auto ker = std::make_unique<Kernel>(program, std::move(block), "main", true);
         ker->insert_arg(PrimitiveType::gen, true);
         for (auto name : names) {
             ker->insert_arg(PrimitiveType::f32, false);
@@ -512,7 +548,9 @@ int main(int argc, char* argv[]) {
                 i++;
             }
         }
+        auto init_ctx = ker_init->make_launch_context();
         while (1) {
+            (*ker_init)(init_ctx);
             launch_ctx.set_arg_nparray(0, taichi::uint64(ans), W * H / 4);
             {
                 int i = 0;
