@@ -405,15 +405,22 @@ void test_auto_diff() {
 }  // namespace lang
 }  // namespace taichi
 
-int main(int argc, char* argv[]) {
+namespace ra {
+std::unique_ptr<taichi::lang::Kernel> ker_init, ker, ker_grad, ker_output;
+std::unique_ptr<taichi::GUI> gui_ptr;
+std::set<std::string> names, reserved_funcs;
+const int W = 512, H = 512, thread_num = 8;
+taichi::real *args;
+std::unique_ptr<taichi::lang::Program> program_ptr;
+
+void run_string(std::string plain) {
     //taichi::lang::test_snode();
     //taichi::lang::test_exptr();
     //taichi::lang::test_auto_diff();
-    std::fstream fs(argv[1], std::fstream::in);
+    /*std::fstream fs(argv[1], std::fstream::in);
     std::string plain;
     for (char ch; fs.get(ch); plain += ch);
-    fs.close();
-    std::set<std::string> names, reserved_funcs;
+    fs.close();*/
     reserved_funcs.insert("cos");
     reserved_funcs.insert("sin");
     auto &&lex = get_lexical(plain, names, reserved_funcs);
@@ -428,10 +435,12 @@ int main(int argc, char* argv[]) {
     //dummy_IR(root, fs, cnt);
     //fs << "\treturn ssa[" + std::to_string(cnt - 1) + "]";
     //fs << "\treturn ssa" + std::to_string(cnt - 1) + "";
+    //delete program_ptr.get();
+    program_ptr = std::make_unique<taichi::lang::Program>(taichi::lang::arch_from_name("cuda"));
+    std::cerr << "OK\n";
     {
         using namespace taichi::lang;
-        const int W = 512, H = 512, thread_num = 8;
-        auto program = Program(arch_from_name("opengl"));
+        auto &program = *program_ptr;
         CompileConfig config_print_ir;
         config_print_ir.print_ir = true;
         program.config = config_print_ir;  // print ir
@@ -451,7 +460,6 @@ int main(int argc, char* argv[]) {
         auto &matrix_x = grad_snode(index_dense, size_dense);
         auto &matrix_y = grad_snode(index_dense, size_dense);
         program.materialize_layout();
-        std::unique_ptr<Kernel> ker_init;
         {  // init
           IRBuilder builder;
           auto *zero = builder.get_int32(0);
@@ -489,6 +497,7 @@ int main(int argc, char* argv[]) {
           }
           ker_init = std::make_unique<Kernel>(program, builder.extract_ir());
         }
+        std::cerr << "after init\n";
 
         auto get_main_ir = [&](bool grad) -> auto {
             IRBuilder builder;
@@ -536,10 +545,9 @@ int main(int argc, char* argv[]) {
             }
             return ker;
         };
-        auto ker = std::unique_ptr<Kernel>(get_main_ir(false));
-        auto ker_grad = std::unique_ptr<Kernel>(get_main_ir(true));
-        auto launch_ctx = ker->make_launch_context();
-        std::unique_ptr<Kernel> ker_output;
+        std::cerr << "after main\n";
+        ker = std::unique_ptr<Kernel>(get_main_ir(false));
+        ker_grad = std::unique_ptr<Kernel>(get_main_ir(true));
         {  // output
           IRBuilder builder;
           auto *zero = builder.get_int32(0);
@@ -580,11 +588,13 @@ int main(int argc, char* argv[]) {
           ker_output = std::make_unique<Kernel>(program, builder.extract_ir());
           for (int i = 0; i < 3; i++) ker_output->insert_arg(PrimitiveType::gen, true);
         }
-        static float ans[W][H], grad_x[W][H], grad_y[W][H];
-        taichi::GUI gui("GUI Test", W, H, true, false, 0, false, false);
-        auto canvas = *gui.canvas;
-        taichi::real args[names.size()];
-        memset(args, 0, sizeof(args));
+        //delete gui_ptr.get();
+        auto ptr = std::make_unique<taichi::GUI>("GUI Test", W, H, true, false, 0, false, false);
+        ptr->update();
+        gui_ptr = std::make_unique<taichi::GUI>("GUI Test", W, H, true, false, 0, false, false);
+        auto &gui = *gui_ptr;
+        args = new taichi::real[names.size()];
+        memset(args, 0, sizeof(taichi::real) * names.size());
         {
             int i = 0;
             for (auto name : names) {
@@ -592,79 +602,95 @@ int main(int argc, char* argv[]) {
                 i++;
             }
         }
-        auto ctx_init = ker_init->make_launch_context();
-        auto ctx_grad = ker_grad->make_launch_context();
-        auto ctx_output = ker_output->make_launch_context();
-        while (1) {
-            (*ker_init)(ctx_init);
-            launch_ctx.set_arg_nparray(0, taichi::uint64(ans), 0);
-            {
-                int i = 0;
-                for (auto name : names) {
-                    launch_ctx.set_arg_float(i + 1, args[i]);
-                    i++;
-                }
-            } 
-            (*ker)(launch_ctx);
-            ctx_grad.set_arg_nparray(0, taichi::uint64(ans), 0);
-            {
-                int i = 0;
-                for (auto name : names) {
-                    ctx_grad.set_arg_float(i + 1, args[i]);
-                    i++;
-                }
-            }
-            (*ker_grad)(ctx_grad);
-            ctx_output.set_arg_nparray(0, taichi::uint64(ans), 0);
-            ctx_output.set_arg_nparray(1, taichi::uint64(grad_x), 0);
-            ctx_output.set_arg_nparray(2, taichi::uint64(grad_y), 0);
-            (*ker_output)(ctx_output);
-            for (int i = 0; i < W; i++) {
-                for (int j = 0; j < H; j++) {
-                    float r = 0, g = 0, b = 0;
-                    double tmp = ans[i][j] * 256;
-                    //double tmp = (grad_y[i][j] - grad_x[i][j]) * 256;
-                    if (tmp < 32) b = 128 + tmp * 4;
-                    else if (tmp < 96) b = 255;
-                    else if (tmp < 159) b = 254 - (tmp - 96) * 4;
-                    if (tmp < 33) g = 0;
-                    else if (tmp < 95) g = 4 * (tmp - 32);
-                    else if (tmp < 160) g = 255;
-                    else if (tmp < 223) g = 252 - 4 * (tmp - 160);
-                    if (tmp > 224) r = 252 - 4 * (tmp - 224);
-                    else if (tmp > 158) r = 255;
-                    else if (tmp > 96) r = 4 * (tmp - 97);
-                    r = r / 255;
-                    g = g / 255;
-                    b = b / 255;
-                    //std::array<taichi::real, 4> tmp{0, ans[i][j] * (1 - blue), ans[i][j] * blue, 255};
-                    std::array<taichi::real, 4> color{r, g, b, 1};
-                    //std::array<taichi::real, 4> tmp{0, (float)(i + j) / W, 0, 255};
-                    canvas.img[i][j] = taichi::Vector4(color);
-                }
-            }
-            for (int i = 0; i < W; i += 32) {
-                for (int j = 0; j < H; j += 32) {
-                    using namespace taichi;
-                    float k = 5, a = 0.2, w = 2, arrow_k = 0.8;
-                    auto off = Vector2(grad_x[i][j] * k, grad_y[i][j] * k);
-                    auto left = Vector2(off[0] * std::cos(a) - off[1] * std::sin(a),
-                                off[0] * std::sin(a) + off[1] * std::cos(a)) * arrow_k;
-                    auto right = Vector2(off[0] * std::cos(-a) - off[1] * std::sin(-a),
-                                off[0] * std::sin(-a) + off[1] * std::cos(-a)) * arrow_k;
-                    auto src = Vector2(i, j);
-                    canvas.path(src, src + off)
-                        .close().color(0, 0, 0).width(w).finish();
-                    canvas.path(src + off, src + left)
-                        .close().color(0, 0, 0).width(w).finish();
-                    canvas.path(src + off, src + right)
-                        .close().color(0, 0, 0).width(w).finish();
-                }
-            }
-            gui.update();
-        }
     }
-    //run_builder(builder);
-    return 0;
 }
 
+void run_frame() {
+    auto &gui = *gui_ptr;
+    auto &canvas = *gui.canvas;
+    static float ans[W][H], grad_x[W][H], grad_y[W][H];
+    auto launch_ctx = ker->make_launch_context();
+    auto ctx_init = ker_init->make_launch_context();
+    auto ctx_grad = ker_grad->make_launch_context();
+    auto ctx_output = ker_output->make_launch_context();
+    (*ker_init)(ctx_init);
+    launch_ctx.set_arg_nparray(0, taichi::uint64(ans), 0);
+    {
+        int i = 0;
+        for (auto name : names) {
+            launch_ctx.set_arg_float(i + 1, args[i]);
+            i++;
+        }
+    } 
+    (*ker)(launch_ctx);
+    ctx_grad.set_arg_nparray(0, taichi::uint64(ans), 0);
+    {
+        int i = 0;
+        for (auto name : names) {
+            ctx_grad.set_arg_float(i + 1, args[i]);
+            i++;
+        }
+    }
+    (*ker_grad)(ctx_grad);
+    ctx_output.set_arg_nparray(0, taichi::uint64(ans), 0);
+    ctx_output.set_arg_nparray(1, taichi::uint64(grad_x), 0);
+    ctx_output.set_arg_nparray(2, taichi::uint64(grad_y), 0);
+    (*ker_output)(ctx_output);
+    for (int i = 0; i < W; i++) {
+        for (int j = 0; j < H; j++) {
+            float r = 0, g = 0, b = 0;
+            double tmp = ans[i][j] * 256;
+            //double tmp = (grad_y[i][j] - grad_x[i][j]) * 256;
+            if (tmp < 32) b = 128 + tmp * 4;
+            else if (tmp < 96) b = 255;
+            else if (tmp < 159) b = 254 - (tmp - 96) * 4;
+            if (tmp < 33) g = 0;
+            else if (tmp < 95) g = 4 * (tmp - 32);
+            else if (tmp < 160) g = 255;
+            else if (tmp < 223) g = 252 - 4 * (tmp - 160);
+            if (tmp > 224) r = 252 - 4 * (tmp - 224);
+            else if (tmp > 158) r = 255;
+            else if (tmp > 96) r = 4 * (tmp - 97);
+            r = r / 255;
+            g = g / 255;
+            b = b / 255;
+            //std::array<taichi::real, 4> tmp{0, ans[i][j] * (1 - blue), ans[i][j] * blue, 255};
+            std::array<taichi::real, 4> color{r, g, b, 1};
+            //std::array<taichi::real, 4> tmp{0, (float)(i + j) / W, 0, 255};
+            canvas.img[i][j] = taichi::Vector4(color);
+        }
+    }
+    for (int i = 0; i < W; i += 32) {
+        for (int j = 0; j < H; j += 32) {
+            using namespace taichi;
+            float k = 5, a = 0.2, w = 2, arrow_k = 0.8;
+            auto off = Vector2(grad_x[i][j] * k, grad_y[i][j] * k);
+            auto left = Vector2(off[0] * std::cos(a) - off[1] * std::sin(a),
+                        off[0] * std::sin(a) + off[1] * std::cos(a)) * arrow_k;
+            auto right = Vector2(off[0] * std::cos(-a) - off[1] * std::sin(-a),
+                        off[0] * std::sin(-a) + off[1] * std::cos(-a)) * arrow_k;
+            auto src = Vector2(i, j);
+            canvas.path(src, src + off)
+                .close().color(0, 0, 0).width(w).finish();
+            canvas.path(src + off, src + left)
+                .close().color(0, 0, 0).width(w).finish();
+            canvas.path(src + off, src + right)
+                .close().color(0, 0, 0).width(w).finish();
+        }
+    }
+    gui.update();
+}
+}
+
+int main() {
+    using namespace std;
+    string input = "";
+    for (char ch; ~(ch = getchar());) {
+        input += ch;
+    }
+    ra::run_string(input);
+    for (;;) ra::run_frame();
+    //ra::run_frame();
+    //ra::run_string(input);
+    return 0;
+}

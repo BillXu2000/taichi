@@ -2,6 +2,7 @@
 global:
     extern "C++" {
         taichi::*;
+        ra::*;
     };
     extern "C" {
         Py*;
