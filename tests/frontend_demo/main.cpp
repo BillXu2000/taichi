@@ -410,8 +410,20 @@ std::unique_ptr<taichi::lang::Kernel> ker_init, ker, ker_grad, ker_output;
 std::unique_ptr<taichi::GUI> gui_ptr;
 std::set<std::string> names, reserved_funcs;
 const int W = 512, H = 512, thread_num = 8;
-taichi::real *args;
+taichi::real *args = nullptr;
 std::unique_ptr<taichi::lang::Program> program_ptr;
+
+void init() {
+    ker_init.reset(nullptr);
+    ker.reset(nullptr);
+    ker_grad.reset(nullptr);
+    ker_output.reset(nullptr);
+    gui_ptr.reset(nullptr);
+    program_ptr.reset(nullptr);
+    names.clear();
+    reserved_funcs.clear();
+    delete [] args;
+}
 
 void run_string(std::string plain) {
     //taichi::lang::test_snode();
@@ -688,9 +700,11 @@ int main() {
     for (char ch; ~(ch = getchar());) {
         input += ch;
     }
+    ra::init();
     ra::run_string(input);
-    for (;;) ra::run_frame();
-    //ra::run_frame();
-    //ra::run_string(input);
+    for (int i = 0; i < 120; i++) ra::run_frame();
+    ra::init();
+    ra::run_string(input);
+    for (int i = 0; i < 120; i++) ra::run_frame();
     return 0;
 }
