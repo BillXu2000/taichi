@@ -305,7 +305,7 @@ void test_exptr() {
     ker->insert_arg(PrimitiveType::gen, true);
     auto launch_ctx = ker->make_launch_context();
     float tmp[10] = {0, 1, 2, 3};
-    launch_ctx.set_arg_nparray(0, uint64(tmp), 4);
+    launch_ctx.set_arg_external_array(0, uint64(tmp), 4);
     (*ker)(launch_ctx);
     //std::cout << prog_.fetch_result<int>(0) << " : ans\n";
     std::cout << tmp[0] << " : tmp[0]\n";
@@ -626,7 +626,7 @@ void run_frame() {
     auto ctx_grad = ker_grad->make_launch_context();
     auto ctx_output = ker_output->make_launch_context();
     (*ker_init)(ctx_init);
-    launch_ctx.set_arg_nparray(0, taichi::uint64(ans), 0);
+    launch_ctx.set_arg_external_array(0, taichi::uint64(ans), 0);
     {
         int i = 0;
         for (auto name : names) {
@@ -635,7 +635,7 @@ void run_frame() {
         }
     } 
     (*ker)(launch_ctx);
-    ctx_grad.set_arg_nparray(0, taichi::uint64(ans), 0);
+    ctx_grad.set_arg_external_array(0, taichi::uint64(ans), 0);
     {
         int i = 0;
         for (auto name : names) {
@@ -644,9 +644,9 @@ void run_frame() {
         }
     }
     (*ker_grad)(ctx_grad);
-    ctx_output.set_arg_nparray(0, taichi::uint64(ans), 0);
-    ctx_output.set_arg_nparray(1, taichi::uint64(grad_x), 0);
-    ctx_output.set_arg_nparray(2, taichi::uint64(grad_y), 0);
+    ctx_output.set_arg_external_array(0, taichi::uint64(ans), 0);
+    ctx_output.set_arg_external_array(1, taichi::uint64(grad_x), 0);
+    ctx_output.set_arg_external_array(2, taichi::uint64(grad_y), 0);
     (*ker_output)(ctx_output);
     for (int i = 0; i < W; i++) {
         for (int j = 0; j < H; j++) {
@@ -702,9 +702,6 @@ int main() {
     }
     ra::init();
     ra::run_string(input);
-    for (int i = 0; i < 120; i++) ra::run_frame();
-    ra::init();
-    ra::run_string(input);
-    for (int i = 0; i < 120; i++) ra::run_frame();
+    for (;;) ra::run_frame();
     return 0;
 }
