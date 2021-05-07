@@ -14,47 +14,83 @@
 
 #include "taichi/gui/gui.h"
 
-void test_snode() {
+void game_of_life() {
+    using namespace std;
     using namespace taichi;
     using namespace lang;
-    auto prog_ = Program(arch_from_name("x64"));
-    //prog_.thread_pool = std::make_unique<ThreadPool>(1);
+    auto program = Program(arch_from_name("x64"));
     CompileConfig config_print_ir;
     config_print_ir.print_ir = true;
-    prog_.config = config_print_ir;  // print ir
-    auto root = prog_.snode_root.get();
+    program.config = config_print_ir;  // print ir
+    auto root = program.snode_root.get();
     auto &dense = root->dense(Index(0), 10);
-    auto &place = dense.insert_children(SNodeType::place);
-    place.dt = PrimitiveType::i32;
-    prog_.materialize_layout();
+    auto &alive = dense.insert_children(SNodeType::place);
+    alive.dt = PrimitiveType::i32;
+    auto &next = dense.insert_children(SNodeType::place);
+    next.dt = PrimitiveType::i32;
+    program.materialize_layout();
 
-
-    IRBuilder builder;
-    auto *zero = builder.get_int32(0);
-    auto *ten = builder.get_int32(10);
-    auto *loop = builder.create_range_for(zero, ten, 1, 0, 4);
+    const int N = 512;
+    std::unique_ptr<Kernel> step_kernel;
     {
-        builder.set_insertion_point_to_loop_begin(loop);
-        auto *index = builder.get_loop_index(loop, 0);
-        auto *ptr = builder.insert(Stmt::make<GlobalPtrStmt>(LaneAttribute<SNode *>(&place), std::vector<Stmt*>(1, index)));
-        builder.insert(std::make_unique<GlobalStoreStmt>(ptr, index));
-        builder.set_insertion_point_to_after(loop);
+        IRBuilder builder;
+        auto *left = builder.get_int32(1);
+        auto *right = builder.get_int32(N - 1);
+        auto *loop_x = builder.create_range_for(left, right, 1, 0, 4);
+        {
+            auto _ = builder.get_loop_guard(loop_x);
+            auto *x = builder.get_loop_index(loop_x, 0);
+            auto *loop_y = builder.create_range_for(left, right, 1, 0, 4);
+            {
+                auto _ = builder.get_loop_guard(loop_y);
+                auto *y = builder.get_loop_index(loop_y, 0);
+                Stmt *sum = nullptr, *sum_ex = nullptr;
+                for (int i = -1; i < 2; i++) {
+                    for (int j = -1; j < 2; j++) {
+                        vector<Stmt *> indices = {
+                            builder.create_add(builder.get_int32(i), x),
+                            builder.create_add(builder.get_int32(j), y)};
+                        auto *load = builder.create_global_load(builder.create_global_ptr(&alive, indices));
+                        if (sum) sum = builder.create_add(sum, load);
+                        else sum = load;
+                        if (!i && !j) sum_ex = builder.create_sub(sum, load);
+                    }
+                }
+                auto ans = builder.create_or(
+                    builder.create_cmp_eq(sum, builder.get_int32(3)),
+                    builder.create_cmp_eq(sum_ex, builder.get_int32(3)));
+                vector<Stmt *> indices = {x, y};
+                builder.create_global_store(builder.create_global_ptr(&next, indices), ans);
+            }
+        }
+        step_kernel = make_unique<Kernel>(program, builder.extract_ir());
     }
-    auto *index = builder.get_int32(4);
-    auto *ret_ptr = builder.insert(Stmt::make<GlobalPtrStmt>(LaneAttribute<SNode *>(&place), std::vector<Stmt*>(1, index)));
-    auto *ret_val = builder.insert(std::make_unique<GlobalLoadStmt>(ret_ptr));
-    builder.create_return(ret_val);
 
-
-    auto block = builder.extract_ir();
-    auto ker = std::make_unique<Kernel>(prog_, std::move(block));
-    auto launch_ctx = ker->make_launch_context();
-    (*ker)(launch_ctx);
-    std::cout << prog_.fetch_result<int>(0) << " : ans\n";
-    exit(0);
+    std::unique_ptr<Kernel> swap_kernel;
+    {
+        IRBuilder builder;
+        auto *left = builder.get_int32(1);
+        auto *right = builder.get_int32(N - 1);
+        auto *loop_x = builder.create_range_for(left, right, 1, 0, 4);
+        {
+            auto _ = builder.get_loop_guard(loop_x);
+            auto *x = builder.get_loop_index(loop_x, 0);
+            auto *loop_y = builder.create_range_for(left, right, 1, 0, 4);
+            {
+                auto _ = builder.get_loop_guard(loop_y);
+                auto *y = builder.get_loop_index(loop_y, 0);
+                vector<Stmt *> indices = {x, y};
+                builder.create_global_store(
+                    builder.create_global_ptr(&alive, indices),
+                    builder.create_global_load(
+                        builder.create_global_ptr(&next, indices)));
+            }
+        }
+        swap_kernel = make_unique<Kernel>(program, builder.extract_ir());
+    }
 }
 
 int main() {
-    test_snode();
+    game_of_life();
     return 0;
 }
