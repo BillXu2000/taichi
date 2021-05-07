@@ -2,6 +2,7 @@ import functools
 import os
 from copy import deepcopy as _deepcopy
 
+import taichi as ti
 from taichi.core.util import ti_core as _ti_core
 from taichi.lang import impl
 from taichi.lang.impl import *
@@ -18,8 +19,6 @@ from taichi.lang.type_factory_impl import type_factory
 from taichi.lang.util import (has_pytorch, is_taichi_class, python_scope,
                               taichi_scope, to_numpy_type, to_pytorch_type,
                               to_taichi_type)
-
-import taichi as ti
 
 # TODO(#2223): Remove
 core = _ti_core
@@ -288,6 +287,42 @@ def svd(A, dt=None):
         dt = impl.get_runtime().default_fp
     from .linalg import svd
     return svd(A, dt)
+
+
+def eig(A, dt=None):
+    """Compute the eigenvalues and right eigenvectors of a real matrix.
+
+    Parameters
+    ----------
+    A: ti.Matrix(n, n)
+        2D Matrix for which the eigenvalues and right eigenvectors will be computed.
+    dt: Optional[DataType]
+        The datatype for the eigenvalues and right eigenvectors
+
+    Returns
+    -------
+    eigenvalues: ti.Matrix(n, 2)
+        The eigenvalues in complex form. Each row stores one eigenvalue. The first number
+        of the eigenvalue represents the real part and the second number represents the
+        imaginary part.
+    eigenvectors: ti.Matrix(n*2, n)
+        The eigenvectors in complex form. Each column stores one eigenvector. Each eigenvector
+        consists of n entries, each of which is represented by two numbers for its real part
+        and imaginary part.
+    """
+    if dt is None:
+        dt = impl.get_runtime().default_fp
+    from taichi.lang import linalg
+    if A.n == 2:
+        return linalg.eig2x2(A, dt)
+    raise Exception("Eigen solver only supports 2D matrices.")
+
+
+def randn(dt=None):
+    if dt is None:
+        dt = impl.get_runtime().default_fp
+    from .random import randn
+    return randn(dt)
 
 
 determinant = deprecated('ti.determinant(a)',
