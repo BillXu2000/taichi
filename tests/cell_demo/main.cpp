@@ -45,6 +45,10 @@ public:
         return builder->create_cmp_gt(stmt, other);
     }
 
+    BuilderHelper operator < (taichi::lang::Stmt *other) {
+        return builder->create_cmp_lt(stmt, other);
+    }
+
     BuilderHelper operator | (taichi::lang::Stmt *other) {
         return builder->create_or(stmt, other);
     }
@@ -111,7 +115,10 @@ void game_of_life() {
                 auto *y = builder.get_loop_index(loop_y, 0);
                 Stmt *cnt = BH(x) * builder.get_int32(N) + y;
                 auto *mod = builder.get_int32(10007);
-                Stmt *ans = (BH(cnt) * builder.get_int32(9287) % mod + mod) % builder.get_int32(2);
+                //Stmt *ans = (BH(cnt) * builder.get_int32(9287) % mod + mod) % builder.get_int32(2);
+                //Stmt *rnd = ((BH(cnt) * builder.get_int32(9287) % mod + mod) % builder.get_int32(16));
+                Stmt *rnd = BH(builder.insert(make_unique<RandStmt>(PrimitiveType::i32))) % builder.get_int32(16);
+                Stmt *ans = (BH(x) > builder.get_int32(N / 2) | BH(y) > builder.get_int32(N / 2)) & rnd & (BH(rnd) < builder.get_int32(16));
                 vector<Stmt *> indices = {x, y};
                 builder.create_global_store(builder.create_global_ptr(&alive, indices), ans);
             }
@@ -133,7 +140,7 @@ void game_of_life() {
             {
                 auto _ = builder.get_loop_guard(loop_y);
                 auto *y = builder.get_loop_index(loop_y, 0);
-                Stmt *sum = nullptr, *self = nullptr;
+                /*Stmt *sum = nullptr, *self = nullptr;
                 for (int i = -1; i < 2; i++) {
                     for (int j = -1; j < 2; j++) {
                         vector<Stmt *> indices = {
@@ -147,6 +154,23 @@ void game_of_life() {
                 }
                 auto ans = (BH(sum) == builder.get_int32(3) | (BH(sum) - self) == builder.get_int32(3)) & builder.get_int32(1);
                 vector<Stmt *> indices = {x, y};
+                builder.create_global_store(builder.create_global_ptr(&next, indices), ans);*/
+                BH ans = builder.get_int32(0);
+                int way[4][2] = {{1, 0}, {0, 1}, {-1, 0}, {0, -1}};
+                for (int i = 0; i < 4; i++) {
+                    vector<Stmt*> index = {way[i][0] ? BH(x) + builder.get_int32(way[i][0]) : x, way[i][1] ? BH(y) + builder.get_int32(way[i][1]) : y};
+                    BH load = builder.create_global_load(builder.create_global_ptr(&alive, index));
+                    ans = ans | load & builder.get_int32(1 << i);
+                }
+                ans = ans + ((ans == builder.get_int32(5)) & builder.get_int32(5)) - ((ans == builder.get_int32(10)) & builder.get_int32(5));
+                vector<Stmt *> indices = {x, y};
+                BH self = builder.create_global_load(builder.create_global_ptr(&alive, indices));
+                //ans = ans + ((BH(x) == builder.get_int32(N - 2)) & ((BH(self) & builder.get_int32(4)) > 0) & builder.get_int32(1));
+                //ans = ans + ((BH(x) == builder.get_int32(N - 2)) & builder.get_int32(1) & ((BH(self) & builder.get_int32(4)) > 0));
+                ans = ans + ((BH(x) == builder.get_int32(N - 2)) & builder.get_int32(1) & ((BH(self) & builder.get_int32(4)) > builder.get_int32(0)));
+                ans = ans + ((BH(y) == builder.get_int32(N - 2)) & builder.get_int32(2) & ((BH(self) & builder.get_int32(8)) > builder.get_int32(0)));
+                ans = ans + ((BH(x) == builder.get_int32(1)) & builder.get_int32(4) & ((BH(self) & builder.get_int32(1)) > builder.get_int32(0)));
+                ans = ans + ((BH(y) == builder.get_int32(1)) & builder.get_int32(8) & ((BH(self) & builder.get_int32(2)) > builder.get_int32(0)));
                 builder.create_global_store(builder.create_global_ptr(&next, indices), ans);
             }
         }
@@ -214,15 +238,21 @@ void game_of_life() {
     (*kernel_init)(ctx_init);
     for (int frame = 0;; frame++) {
         gui.update();
-        if (frame % 60) continue;
+        //if (frame % 5) continue;
         (*kernel_step)(ctx_step);
-        if (frame > 60) (*kernel_swap)(ctx_swap);
+        if (frame) (*kernel_swap)(ctx_swap);
         (*kernel_gui)(ctx_gui);
         long long sum = 0;
         for (int i = 0; i < N; i++) {
             for (int j = 0; j < N; j++) {
-                float k = ans[i][j];
+                /*float k = ans[i][j];
                 sum += ans[i][j];
+                std::array<taichi::real, 4> color{k, 0, 0, 1};
+                canvas.img[i][j] = taichi::Vector4(color);*/
+                float k = 0;
+                for (int z = 0; z < 4; z++) {
+                    if ((ans[i][j] >> z) & 1) k += 0.25;
+                }
                 std::array<taichi::real, 4> color{k, 0, 0, 1};
                 canvas.img[i][j] = taichi::Vector4(color);
             }
