@@ -162,15 +162,13 @@ void game_of_life() {
                     BH load = builder.create_global_load(builder.create_global_ptr(&alive, index));
                     ans = ans | load & builder.get_int32(1 << i);
                 }
-                ans = ans + ((ans == builder.get_int32(5)) & builder.get_int32(5)) - ((ans == builder.get_int32(10)) & builder.get_int32(5));
                 vector<Stmt *> indices = {x, y};
                 BH self = builder.create_global_load(builder.create_global_ptr(&alive, indices));
-                //ans = ans + ((BH(x) == builder.get_int32(N - 2)) & ((BH(self) & builder.get_int32(4)) > 0) & builder.get_int32(1));
-                //ans = ans + ((BH(x) == builder.get_int32(N - 2)) & builder.get_int32(1) & ((BH(self) & builder.get_int32(4)) > 0));
                 ans = ans + ((BH(x) == builder.get_int32(N - 2)) & builder.get_int32(1) & ((BH(self) & builder.get_int32(4)) > builder.get_int32(0)));
                 ans = ans + ((BH(y) == builder.get_int32(N - 2)) & builder.get_int32(2) & ((BH(self) & builder.get_int32(8)) > builder.get_int32(0)));
                 ans = ans + ((BH(x) == builder.get_int32(1)) & builder.get_int32(4) & ((BH(self) & builder.get_int32(1)) > builder.get_int32(0)));
                 ans = ans + ((BH(y) == builder.get_int32(1)) & builder.get_int32(8) & ((BH(self) & builder.get_int32(2)) > builder.get_int32(0)));
+                ans = ans + ((ans == builder.get_int32(5)) & builder.get_int32(5)) - ((ans == builder.get_int32(10)) & builder.get_int32(5));
                 builder.create_global_store(builder.create_global_ptr(&next, indices), ans);
             }
         }
