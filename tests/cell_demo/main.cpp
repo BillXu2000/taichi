@@ -1,22 +1,15 @@
-#include <iostream>
-#include <vector>
-#include <memory>
-#include <string>
-#include <fstream>
-#include <stack>
-#include <set>
-#include <cassert>
+#include "parser.h"
 
-#include "taichi/ir/ir_builder.h"
-#include "taichi/ir/statements.h"
-#include "taichi/program/program.h"
-#include "taichi/ir/ir.h"
+class BuilderHelper;
 
-#include "taichi/gui/gui.h"
+typedef BuilderHelper BH;
 
 class BuilderHelper {
 public:
     static taichi::lang::IRBuilder *builder;
+    static std::map<std::string, taichi::lang::AllocaStmt*> symbol;
+    static std::map<std::string, taichi::lang::SNode*> snode_table;
+    static std::vector<taichi::lang::Stmt*> global_indices;
     taichi::lang::Stmt *stmt;
 
     BuilderHelper(taichi::lang::Stmt *_stmt): stmt(_stmt) {}
@@ -64,8 +57,63 @@ public:
     operator taichi::lang::Stmt*() {
         return stmt;
     }
+
+    static BH gen(CellNode *p) {
+        puts("gen");
+        using namespace std;
+        using namespace taichi;
+        using namespace lang;
+        if (p->token == "{") {
+            for (auto i : p->children) gen(i);
+            return nullptr;
+        }
+        if (p->token == "int") {
+            symbol[p->children[0]->token] = builder->create_local_var(PrimitiveType::i32);
+            return nullptr;
+        }
+        if (p->token == "=") {
+            builder->create_local_store(symbol[p->children[0]->token], gen(p->children[1]));
+            return nullptr;
+        }
+        if (p->token == "if") {
+            auto *branch = builder->create_if(gen(p->children[0]));
+            {
+                auto _ = builder->get_if_guard(branch, true);
+                gen(p->children[1]);
+            }
+            if (p->children.size() > 2) {
+                auto _ = builder->get_if_guard(branch, false);
+                gen(p->children[2]);
+            }
+            return nullptr;
+        }
+        if (isdigit(p->token[0])) return builder->get_int32(atoi(p->token.c_str()));
+        if (isalpha(p->token[0])) {
+            if (p->children.size()) {
+                vector<Stmt*> indices;
+                for (int i = 0; i < p->children.size(); i++) {
+                    indices.push_back(BH(global_indices[i]) + gen(p->children[i]));
+                }
+                return builder->create_global_load(builder->create_global_ptr(snode_table[p->token], indices));
+            }
+            return builder->create_local_load(symbol[p->token]);
+        }
+        if (p->children.size() == 1) {
+            if (p->token == "-") return builder->create_neg(gen(p->children[0]));
+        }
+        if (p->children.size() == 2) {
+            if (p->token == "+") return builder->create_add(gen(p->children[0]), gen(p->children[1]));
+            if (p->token == "-") return builder->create_sub(gen(p->children[0]), gen(p->children[1]));
+            if (p->token == "||") return builder->create_or(gen(p->children[0]), gen(p->children[1]));
+            if (p->token == "==") return builder->create_cmp_eq(gen(p->children[0]), gen(p->children[1]));
+        }
+        assert(false);
+    }
 };
 taichi::lang::IRBuilder *BuilderHelper::builder(nullptr);
+std::map<std::string, taichi::lang::AllocaStmt*> BH::symbol;
+std::map<std::string, taichi::lang::SNode*> BH::snode_table;
+std::vector<taichi::lang::Stmt*> BH::global_indices;
 
 class BuilderHelperGuard {
 public:
@@ -78,7 +126,7 @@ public:
     }
 };
 
-void game_of_life() {
+void game_of_life(CellNode *cell_root) {
     using namespace std;
     using namespace taichi;
     using namespace lang;
@@ -115,10 +163,10 @@ void game_of_life() {
                 auto *y = builder.get_loop_index(loop_y, 0);
                 Stmt *cnt = BH(x) * builder.get_int32(N) + y;
                 auto *mod = builder.get_int32(10007);
-                //Stmt *ans = (BH(cnt) * builder.get_int32(9287) % mod + mod) % builder.get_int32(2);
+                Stmt *ans = (BH(cnt) * builder.get_int32(9287) % mod + mod) % builder.get_int32(2);
                 //Stmt *rnd = ((BH(cnt) * builder.get_int32(9287) % mod + mod) % builder.get_int32(16));
-                Stmt *rnd = BH(builder.insert(make_unique<RandStmt>(PrimitiveType::i32))) % builder.get_int32(16);
-                Stmt *ans = (BH(x) > builder.get_int32(N / 2) | BH(y) > builder.get_int32(N / 2)) & rnd & (BH(rnd) < builder.get_int32(16));
+                //Stmt *rnd = BH(builder.insert(make_unique<RandStmt>(PrimitiveType::i32))) % builder.get_int32(16);
+                //Stmt *ans = (BH(x) > builder.get_int32(N / 2) | BH(y) > builder.get_int32(N / 2)) & rnd & (BH(rnd) < builder.get_int32(16));
                 vector<Stmt *> indices = {x, y};
                 builder.create_global_store(builder.create_global_ptr(&alive, indices), ans);
             }
@@ -140,6 +188,15 @@ void game_of_life() {
             {
                 auto _ = builder.get_loop_guard(loop_y);
                 auto *y = builder.get_loop_index(loop_y, 0);
+                puts("OK");
+                BH::snode_table["alive"] = &alive;
+                BH::global_indices.push_back(x);
+                BH::global_indices.push_back(y);
+                BH::symbol["output"] = builder.create_local_var(PrimitiveType::i32);
+                puts("OK");
+                BH::gen(cell_root);
+                vector<Stmt *> indices = {x, y};
+                builder.create_global_store(builder.create_global_ptr(&next, indices), builder.create_local_load(BH::symbol["output"]));
                 /*Stmt *sum = nullptr, *self = nullptr;
                 for (int i = -1; i < 2; i++) {
                     for (int j = -1; j < 2; j++) {
@@ -155,7 +212,7 @@ void game_of_life() {
                 auto ans = (BH(sum) == builder.get_int32(3) | (BH(sum) - self) == builder.get_int32(3)) & builder.get_int32(1);
                 vector<Stmt *> indices = {x, y};
                 builder.create_global_store(builder.create_global_ptr(&next, indices), ans);*/
-                BH ans = builder.get_int32(0);
+                /*BH ans = builder.get_int32(0);
                 int way[4][2] = {{1, 0}, {0, 1}, {-1, 0}, {0, -1}};
                 for (int i = 0; i < 4; i++) {
                     vector<Stmt*> index = {way[i][0] ? BH(x) + builder.get_int32(way[i][0]) : x, way[i][1] ? BH(y) + builder.get_int32(way[i][1]) : y};
@@ -169,7 +226,7 @@ void game_of_life() {
                 ans = ans + ((BH(x) == builder.get_int32(1)) & builder.get_int32(4) & ((BH(self) & builder.get_int32(1)) > builder.get_int32(0)));
                 ans = ans + ((BH(y) == builder.get_int32(1)) & builder.get_int32(8) & ((BH(self) & builder.get_int32(2)) > builder.get_int32(0)));
                 ans = ans + ((ans == builder.get_int32(5)) & builder.get_int32(5)) - ((ans == builder.get_int32(10)) & builder.get_int32(5));
-                builder.create_global_store(builder.create_global_ptr(&next, indices), ans);
+                builder.create_global_store(builder.create_global_ptr(&next, indices), ans);*/
             }
         }
         kernel_step = make_unique<Kernel>(program, builder.extract_ir());
@@ -243,23 +300,38 @@ void game_of_life() {
         long long sum = 0;
         for (int i = 0; i < N; i++) {
             for (int j = 0; j < N; j++) {
-                /*float k = ans[i][j];
+                float k = ans[i][j];
                 sum += ans[i][j];
                 std::array<taichi::real, 4> color{k, 0, 0, 1};
-                canvas.img[i][j] = taichi::Vector4(color);*/
-                float k = 0;
+                canvas.img[i][j] = taichi::Vector4(color);
+                /*float k = 0;
                 for (int z = 0; z < 4; z++) {
                     if ((ans[i][j] >> z) & 1) k += 0.25;
                 }
                 std::array<taichi::real, 4> color{k, 0, 0, 1};
-                canvas.img[i][j] = taichi::Vector4(color);
+                canvas.img[i][j] = taichi::Vector4(color);*/
             }
         }
         cerr << sum << ": sum\n";
     }
 }
 
+TokenStream *CellNode::ts = nullptr;
+
+void cell_print(CellNode *p, int indent = 0) {
+    for (int i = 0; i < indent; i++) {
+        std::cout << " ";
+    }
+    std::cout << p->token << "\n";
+    for (auto i : p->children) {
+        cell_print(i, indent + 4);
+    }
+}
+
 int main() {
-    game_of_life();
+    TokenStream ts(std::cin);
+    CellNode *root = CellNode::parse(ts);
+    cell_print(root);
+    game_of_life(root);
     return 0;
 }
