@@ -120,6 +120,8 @@ public:
         map<string, int> precedence;
         precedence["+"] = 6;
         precedence["-"] = 6;
+        precedence["&"] = 11;
+        precedence["|"] = 13;
         precedence["=="] = 10;
         precedence["||"] = 15;
         auto fun = [&]() {
