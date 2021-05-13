@@ -137,13 +137,16 @@ void game_of_life(CellNode *cell_root) {
     program.config = config_print_ir;  // print ir
     auto root = program.snode_root.get();
 
-    const int N = 512;
+    const int N = 512, M = 1;
     std::vector<Index> index_dense = {0, 1};
     std::vector<int> size_dense = {N, N};
+    //auto &alive = root->pointer(vector<Index>{0, 1}, vector<int>{M, M}).dense(index_dense, size_dense).insert_children(SNodeType::place);
     auto &alive = root->dense(index_dense, size_dense).insert_children(SNodeType::place);
     alive.dt = PrimitiveType::i32;
-    auto &next = root->dense(index_dense, size_dense).insert_children(SNodeType::place);
+    auto &next = root->pointer(vector<Index>{0, 1}, vector<int>{M, M}).dense(index_dense, size_dense).insert_children(SNodeType::place);
+    //auto &next = root->dense(index_dense, size_dense).insert_children(SNodeType::place);
     next.dt = PrimitiveType::i32;
+
     program.materialize_layout();
 
     typedef BuilderHelper BH;
@@ -152,8 +155,8 @@ void game_of_life(CellNode *cell_root) {
     {
         IRBuilder builder;
         BuilderHelperGuard _(builder);
-        auto *left = builder.get_int32(1);
-        auto *right = builder.get_int32(N - 1);
+        auto *left = builder.get_int32(M / 2 * N);
+        auto *right = builder.get_int32(M / 2 * N + N);
         auto *loop_x = builder.create_range_for(left, right, 1, 0, 4);
         {
             auto _ = builder.get_loop_guard(loop_x);
@@ -172,102 +175,90 @@ void game_of_life(CellNode *cell_root) {
                 builder.create_global_store(builder.create_global_ptr(&alive, indices), ans);
             }
         }
-        kernel_init = make_unique<Kernel>(program, builder.extract_ir());
+        kernel_init = make_unique<Kernel>(program, builder.extract_ir(), "init");
     }
     
     std::unique_ptr<Kernel> kernel_step;
     {
         IRBuilder builder;
         BuilderHelperGuard _(builder);
-        auto *left = builder.get_int32(1);
-        auto *right = builder.get_int32(N - 1);
-        auto *loop_x = builder.create_range_for(left, right, 1, 0, 4);
+        auto *loop = builder.create_struct_for(&alive, -1, 0, 4);
         {
-            auto _ = builder.get_loop_guard(loop_x);
-            auto *x = builder.get_loop_index(loop_x, 0);
-            auto *loop_y = builder.create_range_for(left, right, 1, 0, 4);
-            {
-                auto _ = builder.get_loop_guard(loop_y);
-                auto *y = builder.get_loop_index(loop_y, 0);
-                BH::snode_table["alive"] = &alive;
-                BH::global_indices.push_back(x);
-                BH::global_indices.push_back(y);
-                BH::symbol["output"] = builder.create_local_var(PrimitiveType::i32);
-                BH::gen(cell_root);
-                vector<Stmt *> indices = {x, y};
-                //builder.create_global_store(builder.create_global_ptr(&next, indices), builder.create_local_load(BH::symbol["output"]));
-                BH self = builder.create_global_load(builder.create_global_ptr(&alive, indices));
-                BH ans = builder.create_local_load(BH::symbol["output"]);
-                ans = ans + ((BH(x) == builder.get_int32(N - 2)) & builder.get_int32(1) & ((BH(self) & builder.get_int32(4)) > builder.get_int32(0)));
-                ans = ans + ((BH(y) == builder.get_int32(N - 2)) & builder.get_int32(2) & ((BH(self) & builder.get_int32(8)) > builder.get_int32(0)));
-                ans = ans + ((BH(x) == builder.get_int32(1)) & builder.get_int32(4) & ((BH(self) & builder.get_int32(1)) > builder.get_int32(0)));
-                ans = ans + ((BH(y) == builder.get_int32(1)) & builder.get_int32(8) & ((BH(self) & builder.get_int32(2)) > builder.get_int32(0)));
-                builder.create_global_store(builder.create_global_ptr(&next, indices), ans);
-                /*Stmt *sum = nullptr, *self = nullptr;
-                for (int i = -1; i < 2; i++) {
-                    for (int j = -1; j < 2; j++) {
-                        vector<Stmt *> indices = {
-                            builder.create_add(builder.get_int32(i), x),
-                            builder.create_add(builder.get_int32(j), y)};
-                        auto *load = builder.create_global_load(builder.create_global_ptr(&alive, indices));
-                        if (sum) sum = builder.create_add(sum, load);
-                        else sum = load;
-                        if (!i && !j) self = load;
-                    }
+            auto _ = builder.get_loop_guard(loop);
+            auto *x = builder.get_loop_index(loop, 0);
+            auto *y = builder.get_loop_index(loop, 1);
+            BH::snode_table["alive"] = &alive;
+            BH::global_indices.push_back(x);
+            BH::global_indices.push_back(y);
+            BH::symbol["output"] = builder.create_local_var(PrimitiveType::i32);
+            BH::gen(cell_root);
+            vector<Stmt *> indices = {x, y};
+            //builder.create_global_store(builder.create_global_ptr(&next, indices), builder.create_local_load(BH::symbol["output"]));
+            BH self = builder.create_global_load(builder.create_global_ptr(&alive, indices));
+            BH ans = builder.create_local_load(BH::symbol["output"]);
+            //ans = ans + ((BH(x) == builder.get_int32(N - 1)) & builder.get_int32(1) & ((BH(self) & builder.get_int32(4)) > builder.get_int32(0)));
+            //ans = ans + ((BH(y) == builder.get_int32(N - 1)) & builder.get_int32(2) & ((BH(self) & builder.get_int32(8)) > builder.get_int32(0)));
+            //ans = ans + ((BH(x) == builder.get_int32(0)) & builder.get_int32(4) & ((BH(self) & builder.get_int32(1)) > builder.get_int32(0)));
+            //ans = ans + ((BH(y) == builder.get_int32(0)) & builder.get_int32(8) & ((BH(self) & builder.get_int32(2)) > builder.get_int32(0)));
+            builder.create_global_store(builder.create_global_ptr(&next, indices), ans);
+            /*Stmt *sum = nullptr, *self = nullptr;
+            for (int i = -1; i < 2; i++) {
+                for (int j = -1; j < 2; j++) {
+                    vector<Stmt *> indices = {
+                        builder.create_add(builder.get_int32(i), x),
+                        builder.create_add(builder.get_int32(j), y)};
+                    auto *load = builder.create_global_load(builder.create_global_ptr(&alive, indices));
+                    if (sum) sum = builder.create_add(sum, load);
+                    else sum = load;
+                    if (!i && !j) self = load;
                 }
-                auto ans = (BH(sum) == builder.get_int32(3) | (BH(sum) - self) == builder.get_int32(3)) & builder.get_int32(1);
-                vector<Stmt *> indices = {x, y};
-                builder.create_global_store(builder.create_global_ptr(&next, indices), ans);*/
-                /*BH ans = builder.get_int32(0);
-                int way[4][2] = {{1, 0}, {0, 1}, {-1, 0}, {0, -1}};
-                for (int i = 0; i < 4; i++) {
-                    vector<Stmt*> index = {way[i][0] ? BH(x) + builder.get_int32(way[i][0]) : x, way[i][1] ? BH(y) + builder.get_int32(way[i][1]) : y};
-                    BH load = builder.create_global_load(builder.create_global_ptr(&alive, index));
-                    ans = ans | load & builder.get_int32(1 << i);
-                }
-                vector<Stmt *> indices = {x, y};
-                BH self = builder.create_global_load(builder.create_global_ptr(&alive, indices));
-                ans = ans + ((BH(x) == builder.get_int32(N - 2)) & builder.get_int32(1) & ((BH(self) & builder.get_int32(4)) > builder.get_int32(0)));
-                ans = ans + ((BH(y) == builder.get_int32(N - 2)) & builder.get_int32(2) & ((BH(self) & builder.get_int32(8)) > builder.get_int32(0)));
-                ans = ans + ((BH(x) == builder.get_int32(1)) & builder.get_int32(4) & ((BH(self) & builder.get_int32(1)) > builder.get_int32(0)));
-                ans = ans + ((BH(y) == builder.get_int32(1)) & builder.get_int32(8) & ((BH(self) & builder.get_int32(2)) > builder.get_int32(0)));
-                ans = ans + ((ans == builder.get_int32(5)) & builder.get_int32(5)) - ((ans == builder.get_int32(10)) & builder.get_int32(5));
-                builder.create_global_store(builder.create_global_ptr(&next, indices), ans);*/
             }
+            auto ans = (BH(sum) == builder.get_int32(3) | (BH(sum) - self) == builder.get_int32(3)) & builder.get_int32(1);
+            vector<Stmt *> indices = {x, y};
+            builder.create_global_store(builder.create_global_ptr(&next, indices), ans);*/
+            /*BH ans = builder.get_int32(0);
+            int way[4][2] = {{1, 0}, {0, 1}, {-1, 0}, {0, -1}};
+            for (int i = 0; i < 4; i++) {
+                vector<Stmt*> index = {way[i][0] ? BH(x) + builder.get_int32(way[i][0]) : x, way[i][1] ? BH(y) + builder.get_int32(way[i][1]) : y};
+                BH load = builder.create_global_load(builder.create_global_ptr(&alive, index));
+                ans = ans | load & builder.get_int32(1 << i);
+            }
+            vector<Stmt *> indices = {x, y};
+            BH self = builder.create_global_load(builder.create_global_ptr(&alive, indices));
+            ans = ans + ((BH(x) == builder.get_int32(N - 2)) & builder.get_int32(1) & ((BH(self) & builder.get_int32(4)) > builder.get_int32(0)));
+            ans = ans + ((BH(y) == builder.get_int32(N - 2)) & builder.get_int32(2) & ((BH(self) & builder.get_int32(8)) > builder.get_int32(0)));
+            ans = ans + ((BH(x) == builder.get_int32(1)) & builder.get_int32(4) & ((BH(self) & builder.get_int32(1)) > builder.get_int32(0)));
+            ans = ans + ((BH(y) == builder.get_int32(1)) & builder.get_int32(8) & ((BH(self) & builder.get_int32(2)) > builder.get_int32(0)));
+            ans = ans + ((ans == builder.get_int32(5)) & builder.get_int32(5)) - ((ans == builder.get_int32(10)) & builder.get_int32(5));
+            builder.create_global_store(builder.create_global_ptr(&next, indices), ans);*/
         }
-        kernel_step = make_unique<Kernel>(program, builder.extract_ir());
+        kernel_step = make_unique<Kernel>(program, builder.extract_ir(), "step");
     }
 
     std::unique_ptr<Kernel> kernel_swap;
     {
         IRBuilder builder;
         BuilderHelperGuard _(builder);
-        auto *left = builder.get_int32(1);
-        auto *right = builder.get_int32(N - 1);
-        auto *loop_x = builder.create_range_for(left, right, 1, 0, 4);
+        auto *loop = builder.create_struct_for(&alive, 1, 0, 4);
         {
-            auto _ = builder.get_loop_guard(loop_x);
-            auto *x = builder.get_loop_index(loop_x, 0);
-            auto *loop_y = builder.create_range_for(left, right, 1, 0, 4);
-            {
-                auto _ = builder.get_loop_guard(loop_y);
-                auto *y = builder.get_loop_index(loop_y, 0);
-                vector<Stmt *> indices = {x, y};
-                builder.create_global_store(
-                    builder.create_global_ptr(&alive, indices),
-                    builder.create_global_load(
-                        builder.create_global_ptr(&next, indices)));
-            }
+            auto _ = builder.get_loop_guard(loop);
+            auto *x = builder.get_loop_index(loop, 0);
+            auto *y = builder.get_loop_index(loop, 1);
+            vector<Stmt *> indices = {x, y};
+            builder.create_global_store(
+                builder.create_global_ptr(&alive, indices),
+                builder.create_global_load(
+                    builder.create_global_ptr(&next, indices)));
         }
-        kernel_swap = make_unique<Kernel>(program, builder.extract_ir());
+        kernel_swap = make_unique<Kernel>(program, builder.extract_ir(), "swap");
     }
 
     std::unique_ptr<Kernel> kernel_gui;
     {
         IRBuilder builder;
         BuilderHelperGuard _(builder);
-        auto *left = builder.get_int32(1);
-        auto *right = builder.get_int32(N - 1);
+        auto *left = builder.get_int32(M / 2 * N);
+        auto *right = builder.get_int32(M / 2 * N + N);
         auto *loop_x = builder.create_range_for(left, right, 1, 0, 4);
         {
             auto _ = builder.get_loop_guard(loop_x);
@@ -280,12 +271,12 @@ void game_of_life(CellNode *cell_root) {
                 builder.create_global_store(
                     builder.create_external_ptr(
                         builder.create_arg_load(0, PrimitiveType::i32, true),
-                        vector<Stmt *>(1, BH(x) * builder.get_int32(N) + y)),
+                        vector<Stmt *>(1, BH(x) % builder.get_int32(N) * builder.get_int32(N) + BH(y) % builder.get_int32(N))),
                     builder.create_global_load(
                         builder.create_global_ptr(&alive, indices)));
             }
         }
-        kernel_gui = make_unique<Kernel>(program, builder.extract_ir());
+        kernel_gui = make_unique<Kernel>(program, builder.extract_ir(), "gui");
         kernel_gui->insert_arg(PrimitiveType::gen, true);
     }
     auto gui = GUI("cell language", N, N, true, false, 0, false, false);
