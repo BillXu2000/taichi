@@ -137,11 +137,12 @@ void game_of_life(CellNode *cell_root) {
     program.config = config_print_ir;  // print ir
     auto root = program.snode_root.get();
 
-    const int N = 512, M = 1;
+    const int N = 512, M = 15;
     std::vector<Index> index_dense = {0, 1};
     std::vector<int> size_dense = {N, N};
-    //auto &alive = root->pointer(vector<Index>{0, 1}, vector<int>{M, M}).dense(index_dense, size_dense).insert_children(SNodeType::place);
-    auto &alive = root->dense(index_dense, size_dense).insert_children(SNodeType::place);
+    auto &pointer = root->pointer(vector<Index>{0, 1}, vector<int>{M, M}).dense(index_dense, size_dense);
+    auto &alive = pointer.insert_children(SNodeType::place);
+    //auto &alive = root->dense(index_dense, size_dense).insert_children(SNodeType::place);
     alive.dt = PrimitiveType::i32;
     auto &next = root->pointer(vector<Index>{0, 1}, vector<int>{M, M}).dense(index_dense, size_dense).insert_children(SNodeType::place);
     //auto &next = root->dense(index_dense, size_dense).insert_children(SNodeType::place);
@@ -170,7 +171,7 @@ void game_of_life(CellNode *cell_root) {
                 //Stmt *ans = (BH(cnt) * builder.get_int32(9287) % mod + mod) % builder.get_int32(2);
                 //Stmt *rnd = ((BH(cnt) * builder.get_int32(9287) % mod + mod) % builder.get_int32(16));
                 Stmt *rnd = BH(builder.insert(make_unique<RandStmt>(PrimitiveType::i32))) % builder.get_int32(16);
-                Stmt *ans = (BH(x) > builder.get_int32(N / 2) | BH(y) > builder.get_int32(N / 2)) & rnd & (BH(rnd) < builder.get_int32(16));
+                Stmt *ans = (BH(x) > builder.get_int32(M / 2 * N + N / 2) | BH(y) > builder.get_int32(M / 2 * N + N / 2)) & rnd & (BH(rnd) < builder.get_int32(16));
                 vector<Stmt *> indices = {x, y};
                 builder.create_global_store(builder.create_global_ptr(&alive, indices), ans);
             }
@@ -182,7 +183,7 @@ void game_of_life(CellNode *cell_root) {
     {
         IRBuilder builder;
         BuilderHelperGuard _(builder);
-        auto *loop = builder.create_struct_for(&alive, -1, 0, 4);
+        auto *loop = builder.create_struct_for(&pointer, -1, 0, 4);
         {
             auto _ = builder.get_loop_guard(loop);
             auto *x = builder.get_loop_index(loop, 0);
@@ -196,10 +197,10 @@ void game_of_life(CellNode *cell_root) {
             //builder.create_global_store(builder.create_global_ptr(&next, indices), builder.create_local_load(BH::symbol["output"]));
             BH self = builder.create_global_load(builder.create_global_ptr(&alive, indices));
             BH ans = builder.create_local_load(BH::symbol["output"]);
-            //ans = ans + ((BH(x) == builder.get_int32(N - 1)) & builder.get_int32(1) & ((BH(self) & builder.get_int32(4)) > builder.get_int32(0)));
-            //ans = ans + ((BH(y) == builder.get_int32(N - 1)) & builder.get_int32(2) & ((BH(self) & builder.get_int32(8)) > builder.get_int32(0)));
-            //ans = ans + ((BH(x) == builder.get_int32(0)) & builder.get_int32(4) & ((BH(self) & builder.get_int32(1)) > builder.get_int32(0)));
-            //ans = ans + ((BH(y) == builder.get_int32(0)) & builder.get_int32(8) & ((BH(self) & builder.get_int32(2)) > builder.get_int32(0)));
+            ans = ans + ((BH(x) == builder.get_int32(M / 2 * N + N - 1)) & builder.get_int32(1) & ((BH(self) & builder.get_int32(4)) > builder.get_int32(0)));
+            ans = ans + ((BH(y) == builder.get_int32(M / 2 * N + N - 1)) & builder.get_int32(2) & ((BH(self) & builder.get_int32(8)) > builder.get_int32(0)));
+            ans = ans + ((BH(x) == builder.get_int32(M / 2 * N)) & builder.get_int32(4) & ((BH(self) & builder.get_int32(1)) > builder.get_int32(0)));
+            ans = ans + ((BH(y) == builder.get_int32(M / 2 * N)) & builder.get_int32(8) & ((BH(self) & builder.get_int32(2)) > builder.get_int32(0)));
             builder.create_global_store(builder.create_global_ptr(&next, indices), ans);
             /*Stmt *sum = nullptr, *self = nullptr;
             for (int i = -1; i < 2; i++) {
@@ -239,7 +240,7 @@ void game_of_life(CellNode *cell_root) {
     {
         IRBuilder builder;
         BuilderHelperGuard _(builder);
-        auto *loop = builder.create_struct_for(&alive, 1, 0, 4);
+        auto *loop = builder.create_struct_for(&pointer, 1, 0, 4);
         {
             auto _ = builder.get_loop_guard(loop);
             auto *x = builder.get_loop_index(loop, 0);
@@ -325,7 +326,44 @@ void cell_print(CellNode *p, int indent = 0) {
     }
 }
 
+void test_pointer_struct_for() {
+    using namespace std;
+    using namespace taichi;
+    using namespace lang;
+    auto program = Program(arch_from_name("x64"));
+    CompileConfig config_print_ir;
+    config_print_ir.print_ir = true;
+    program.config = config_print_ir;  // print ir
+    auto root = program.snode_root.get();
+
+    //auto &alive = root->pointer(vector<Index>{0}, vector<int>{9}).insert_children(SNodeType::place);
+    auto &pointer = root->pointer(vector<Index>{0}, vector<int>{9});
+    auto &alive = pointer.insert_children(SNodeType::place);
+    alive.dt = PrimitiveType::i32;
+
+    program.materialize_layout();
+
+    typedef BuilderHelper BH;
+    std::unique_ptr<Kernel> kernel_for;
+    {
+        IRBuilder builder;
+        BuilderHelperGuard _(builder);
+        auto *loop = builder.create_struct_for(&pointer, 1, 0, 4);
+        //auto *loop = builder.create_range_for(builder.get_int32(0), builder.get_int32(9), 1, 0, 4);
+        {
+            auto _ = builder.get_loop_guard(loop);
+            auto *x = builder.get_loop_index(loop, 0);
+            builder.create_global_store(builder.create_global_ptr(&alive, vector<Stmt*>{x}), x);
+        }
+        kernel_for = make_unique<Kernel>(program, builder.extract_ir(), "pointer struct for");
+    }
+    auto ctx = kernel_for->make_launch_context();
+    (*kernel_for)(ctx);
+    exit(0);
+}
+
 int main() {
+    //test_pointer_struct_for();
     TokenStream ts(std::cin);
     CellNode *root = CellNode::parse(ts);
     cell_print(root);
