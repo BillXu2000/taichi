@@ -310,6 +310,9 @@ void game_of_life(CellNode *cell_root) {
                 canvas.img[i][j] = taichi::Vector4(color);
             }
         }
+        string name = to_string(frame);
+        for (; name.size() < 5; name = "0" + name);
+        if (frame % 60 == 0 || frame < 60) gui.screenshot(name + ".png");
         cerr << sum << ": sum\n";
     }
 }

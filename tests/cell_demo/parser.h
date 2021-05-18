@@ -40,7 +40,7 @@ public:
             else {
                 string tmp = "";
                 tmp += in.get();
-                if (raw_tokens.size() && raw_tokens.back() == tmp) raw_tokens.back() += tmp;
+                if (raw_tokens.size() && raw_tokens.back() == tmp && (tmp == "=" || tmp == "&" || tmp == "|")) raw_tokens.back() += tmp;
                 else raw_tokens.push_back(tmp);
             }
         }
@@ -120,9 +120,9 @@ public:
         map<string, int> precedence;
         precedence["+"] = 6;
         precedence["-"] = 6;
+        precedence["=="] = 10;
         precedence["&"] = 11;
         precedence["|"] = 13;
-        precedence["=="] = 10;
         precedence["||"] = 15;
         auto fun = [&]() {
             CellNode *first, *second;
@@ -138,6 +138,7 @@ public:
         };
         eles.push(parse_single_element());
         for (;peek() != ";" && peek() != ")" && peek() != "," && peek() != "]";) {
+            cout << peek() << ": peek\n";
             assert(precedence.find(peek()) != precedence.end());
             for (; !ops.empty() && precedence[ops.top()] <= precedence[peek()]; fun());
             ops.push(get());
