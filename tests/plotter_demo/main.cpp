@@ -425,6 +425,10 @@ void init() {
     delete [] args;
 }
 
+void screenshot() {
+    gui_ptr->screenshot();
+}
+
 void run_string(std::string plain) {
     //taichi::lang::test_snode();
     //taichi::lang::test_exptr();
@@ -601,9 +605,9 @@ void run_string(std::string plain) {
           for (int i = 0; i < 3; i++) ker_output->insert_arg(PrimitiveType::gen, true);
         }
         //delete gui_ptr.get();
-        auto ptr = std::make_unique<taichi::GUI>("GUI Test", W, H, true, false, 0, false, false);
+        auto ptr = std::make_unique<taichi::GUI>("GUI Test", 720, H, true, false, 0, false, false);
         ptr->update();
-        gui_ptr = std::make_unique<taichi::GUI>("GUI Test", W, H, true, false, 0, false, false);
+        gui_ptr = std::make_unique<taichi::GUI>("GUI Test", 720, H, true, false, 0, false, false);
         auto &gui = *gui_ptr;
         args = new taichi::real[names.size()];
         memset(args, 0, sizeof(taichi::real) * names.size());
@@ -614,6 +618,7 @@ void run_string(std::string plain) {
                 i++;
             }
         }
+        //gui.button("sc", screenshot);
     }
 }
 
@@ -675,7 +680,7 @@ void run_frame() {
     for (int i = 0; i < W; i += 32) {
         for (int j = 0; j < H; j += 32) {
             using namespace taichi;
-            float k = 5, a = 0.2, w = 2, arrow_k = 0.8;
+            float k = 3, a = 0.2, w = 2, arrow_k = 0.8;
             auto off = Vector2(grad_x[i][j] * k, grad_y[i][j] * k);
             auto left = Vector2(off[0] * std::cos(a) - off[1] * std::sin(a),
                         off[0] * std::sin(a) + off[1] * std::cos(a)) * arrow_k;
@@ -691,6 +696,13 @@ void run_frame() {
         }
     }
     gui.update();
+    for (;gui.has_key_event();) {
+        auto eve = gui.get_key_event_head();
+        gui.pop_key_event_head();
+        if (eve.type == taichi::GUI::KeyEvent::Type::press && eve.key == "s") {
+            screenshot();
+        }
+    }
 }
 }
 
