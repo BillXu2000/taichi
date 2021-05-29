@@ -152,7 +152,7 @@ void game_of_life(CellNode *cell_root, int argc, char *argv[]) {
 
     typedef BuilderHelper BH;
 
-    std::unique_ptr<Kernel> kernel_init;
+    /*std::unique_ptr<Kernel> kernel_init;
     {
         IRBuilder builder;
         BuilderHelperGuard _(builder);
@@ -178,9 +178,9 @@ void game_of_life(CellNode *cell_root, int argc, char *argv[]) {
             }
         }
         kernel_init = make_unique<Kernel>(program, builder.extract_ir(), "init");
-    }
+    }*/
 
-    /*std::unique_ptr<Kernel> kernel_init;
+    std::unique_ptr<Kernel> kernel_init;
     {
         IRBuilder builder;
         BuilderHelperGuard _(builder);
@@ -197,8 +197,31 @@ void game_of_life(CellNode *cell_root, int argc, char *argv[]) {
                 }
             }
         }
+        else {
+            auto *left = builder.get_int32(M / 2 * N);
+            auto *right = builder.get_int32(M / 2 * N + N);
+            auto *loop_x = builder.create_range_for(left, right, 1, 0, 4);
+            {
+                auto _ = builder.get_loop_guard(loop_x);
+                auto *x = builder.get_loop_index(loop_x, 0);
+                auto *loop_y = builder.create_range_for(left, right, 1, 0, 4);
+                {
+                    auto _ = builder.get_loop_guard(loop_y);
+                    auto *y = builder.get_loop_index(loop_y, 0);
+                    Stmt *cnt = BH(x) * builder.get_int32(N) + y;
+                    auto *mod = builder.get_int32(10007);
+                    //Stmt *ans = (BH(cnt) * builder.get_int32(9287) % mod + mod) % builder.get_int32(2);
+                    //Stmt *rnd = ((BH(cnt) * builder.get_int32(9287) % mod + mod) % builder.get_int32(16));
+                    //Stmt *rnd = BH(builder.insert(make_unique<RandStmt>(PrimitiveType::i32))) % builder.get_int32(16);
+                    Stmt *rnd = BH(builder.create_rand(PrimitiveType::i32)) % builder.get_int32(2);
+                    Stmt *ans = (BH(x) > builder.get_int32(M / 2 * N + N / 2) | BH(y) > builder.get_int32(M / 2 * N + N / 2)) & rnd & (BH(rnd) < builder.get_int32(16));
+                    vector<Stmt *> indices = {x, y};
+                    builder.create_global_store(builder.create_global_ptr(&alive, indices), ans);
+                }
+            }
+        }
         kernel_init = make_unique<Kernel>(program, builder.extract_ir(), "init");
-    }*/
+    }
     
     std::unique_ptr<Kernel> kernel_step;
     {
@@ -350,7 +373,7 @@ void game_of_life(CellNode *cell_root, int argc, char *argv[]) {
         long long sum = 0;
         for (int i = 0; i < N; i++) {
             for (int j = 0; j < N; j++) {
-                float k = ans[i][j] & 1, z = (ans[i][j] & 2) * 0.05;
+                float k = ans[i][j] & 1, z = (ans[i][j] & 2) * 0.2;
                 sum += ans[i][j];
                 std::array<taichi::real, 4> color{k, z, z, 1};
                 canvas.img[i][j] = taichi::Vector4(color);
