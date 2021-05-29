@@ -191,7 +191,7 @@ void game_of_life(CellNode *cell_root, int argc, char *argv[]) {
                 for (int j = 0; j < m; j++) {
                     int k;
                     in >> k;
-                    vector<Stmt*> indices{builder.get_int32(i), builder.get_int32(j)};
+                    vector<Stmt*> indices{builder.get_int32(i + 2), builder.get_int32(j + 2)};
                     if (k) builder.create_global_store(builder.create_global_ptr(&alive, indices), builder.get_int32(1));
                 }
             }
@@ -221,10 +221,14 @@ void game_of_life(CellNode *cell_root, int argc, char *argv[]) {
             ans = ans + ((BH(y) == builder.get_int32(M / 2 * N + N - 1)) & builder.get_int32(2) & ((BH(self) & builder.get_int32(8)) > builder.get_int32(0)));
             ans = ans + ((BH(x) == builder.get_int32(M / 2 * N)) & builder.get_int32(4) & ((BH(self) & builder.get_int32(1)) > builder.get_int32(0)));
             ans = ans + ((BH(y) == builder.get_int32(M / 2 * N)) & builder.get_int32(8) & ((BH(self) & builder.get_int32(2)) > builder.get_int32(0)));*/
-            for (int i = -1; i < 2; i++) {
-                for (int j = -1; j < 2; j++) {
-                    vector<Stmt *> indices = {x + builder.get_int32(i), y + builder.get_int32(j)};
-                    builder.insert(make_unique<AtomicOpStmt>(AtomicOpType::add, builder.create_global_ptr(&alive, indices), builder.get_int32(0)));
+            auto* branch = builder.create_if(self);
+            {
+                auto _ = builder.get_if_guard(branch, true);
+                for (int i = -1; i < 2; i++) {
+                    for (int j = -1; j < 2; j++) {
+                        vector<Stmt *> indices = {x + builder.get_int32(i), y + builder.get_int32(j)};
+                        builder.insert(make_unique<AtomicOpStmt>(AtomicOpType::add, builder.create_global_ptr(&alive, indices), builder.get_int32(0)));
+                    }
                 }
             }
             builder.create_global_store(builder.create_global_ptr(&next, indices), ans);
@@ -320,8 +324,8 @@ void game_of_life(CellNode *cell_root, int argc, char *argv[]) {
                 builder.create_external_ptr(
                     builder.create_arg_load(0, PrimitiveType::i32, true),
                     vector<Stmt *>(1, BH(x) % builder.get_int32(N) * builder.get_int32(N) + BH(y) % builder.get_int32(N))),
-                builder.create_global_load(
-                    builder.create_global_ptr(&alive, indices)));
+                BH(builder.create_global_load(builder.create_global_ptr(&alive, indices))) + builder.get_int32(2));
+                //builder.create_global_load(builder.create_global_ptr(&alive, indices)));
         }
         kernel_gui = make_unique<Kernel>(program, builder.extract_ir(), "gui");
         kernel_gui->insert_arg(PrimitiveType::gen, true);
@@ -344,9 +348,9 @@ void game_of_life(CellNode *cell_root, int argc, char *argv[]) {
         long long sum = 0;
         for (int i = 0; i < N; i++) {
             for (int j = 0; j < N; j++) {
-                float k = ans[i][j];
+                float k = ans[i][j] & 1, z = (ans[i][j] & 2) * 0.05;
                 sum += ans[i][j];
-                std::array<taichi::real, 4> color{k, 0, 0, 1};
+                std::array<taichi::real, 4> color{k, z, z, 1};
                 canvas.img[i][j] = taichi::Vector4(color);
                 /*float k = 0;
                 for (int z = 0; z < 4; z++) {
