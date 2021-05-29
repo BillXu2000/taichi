@@ -152,7 +152,7 @@ void game_of_life(CellNode *cell_root, int argc, char *argv[]) {
 
     typedef BuilderHelper BH;
 
-    /*std::unique_ptr<Kernel> kernel_init;
+    std::unique_ptr<Kernel> kernel_init;
     {
         IRBuilder builder;
         BuilderHelperGuard _(builder);
@@ -170,16 +170,17 @@ void game_of_life(CellNode *cell_root, int argc, char *argv[]) {
                 auto *mod = builder.get_int32(10007);
                 //Stmt *ans = (BH(cnt) * builder.get_int32(9287) % mod + mod) % builder.get_int32(2);
                 //Stmt *rnd = ((BH(cnt) * builder.get_int32(9287) % mod + mod) % builder.get_int32(16));
-                Stmt *rnd = BH(builder.insert(make_unique<RandStmt>(PrimitiveType::i32))) % builder.get_int32(16);
+                //Stmt *rnd = BH(builder.insert(make_unique<RandStmt>(PrimitiveType::i32))) % builder.get_int32(16);
+                Stmt *rnd = BH(builder.create_rand(PrimitiveType::i32)) % builder.get_int32(2);
                 Stmt *ans = (BH(x) > builder.get_int32(M / 2 * N + N / 2) | BH(y) > builder.get_int32(M / 2 * N + N / 2)) & rnd & (BH(rnd) < builder.get_int32(16));
                 vector<Stmt *> indices = {x, y};
                 builder.create_global_store(builder.create_global_ptr(&alive, indices), ans);
             }
         }
         kernel_init = make_unique<Kernel>(program, builder.extract_ir(), "init");
-    }*/
+    }
 
-    std::unique_ptr<Kernel> kernel_init;
+    /*std::unique_ptr<Kernel> kernel_init;
     {
         IRBuilder builder;
         BuilderHelperGuard _(builder);
@@ -197,7 +198,7 @@ void game_of_life(CellNode *cell_root, int argc, char *argv[]) {
             }
         }
         kernel_init = make_unique<Kernel>(program, builder.extract_ir(), "init");
-    }
+    }*/
     
     std::unique_ptr<Kernel> kernel_step;
     {
@@ -227,7 +228,8 @@ void game_of_life(CellNode *cell_root, int argc, char *argv[]) {
                 for (int i = -1; i < 2; i++) {
                     for (int j = -1; j < 2; j++) {
                         vector<Stmt *> indices = {x + builder.get_int32(i), y + builder.get_int32(j)};
-                        builder.insert(make_unique<AtomicOpStmt>(AtomicOpType::add, builder.create_global_ptr(&alive, indices), builder.get_int32(0)));
+                        //builder.insert(make_unique<AtomicOpStmt>(AtomicOpType::add, builder.create_global_ptr(&alive, indices), builder.get_int32(0)));
+                        builder.create_atomic_add(builder.create_global_ptr(&alive, indices), builder.get_int32(0));
                     }
                 }
             }
