@@ -160,7 +160,7 @@ Program::Program(Arch desired_arch) : snode_rw_accessors_bank_(this) {
 #endif
 
   result_buffer = nullptr;
-  current_kernel_or_function = static_cast<Kernel *>(nullptr);
+  current_callable = nullptr;
   sync = true;
   llvm_runtime = nullptr;
   finalized = false;
@@ -239,8 +239,7 @@ FunctionType Program::compile(Kernel &kernel) {
   auto start_t = Time::get_time();
   TI_AUTO_PROF;
   FunctionType ret = nullptr;
-  if (arch_is_cpu(kernel.arch) || kernel.arch == Arch::cuda ||
-      kernel.arch == Arch::metal) {
+  if (Kernel::supports_lowering(kernel.arch)) {
     kernel.lower();
     ret = compile_to_backend_executable(kernel, /*offloaded=*/nullptr);
   } else if (kernel.arch == Arch::opengl) {
@@ -588,10 +587,9 @@ void Program::visualize_layout(const std::string &fn) {
       for (int i = 0; i < taichi_max_num_indices; i++) {
         if (snode->extractors[i].active) {
           int nb = snode->extractors[i].num_bits;
-          int start = snode->extractors[i].start + nb;
           indices += fmt::format(
               R"($\mathbf{{{}}}^{{\mathbf{{{}b}}:{}}}_{{\mathbf{{{}b}}:{}}}$)",
-              std::string(1, 'I' + i), start, latex_short_digit(1 << start), nb,
+              std::string(1, 'I' + i), 0, latex_short_digit(1 << 0), nb,
               latex_short_digit(1 << nb));
         }
       }
@@ -648,7 +646,7 @@ Kernel &Program::get_snode_reader(SNode *snode) {
     for (int i = 0; i < snode->num_active_indices; i++) {
       indices.push_back(Expr::make<ArgLoadExpression>(i, PrimitiveType::i32));
     }
-    auto ret = Stmt::make<FrontendKernelReturnStmt>(
+    auto ret = Stmt::make<FrontendReturnStmt>(
         load_if_ptr(Expr(snode_to_glb_var_exprs_.at(snode))[indices]));
     current_ast_builder().insert(std::move(ret));
   });
@@ -873,6 +871,10 @@ void Program::materialize_snode_expr_attributes() {
   for (auto &[snode, glb_var] : snode_to_glb_var_exprs_) {
     glb_var->set_attribute("dim", std::to_string(snode->num_active_indices));
   }
+}
+
+std::unique_ptr<AotModuleBuilder> Program::make_aot_module_builder(Arch arch) {
+  return nullptr;
 }
 
 TLANG_NAMESPACE_END

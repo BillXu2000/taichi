@@ -6,11 +6,10 @@ import operator as _bt_ops_mod  # bt for builtin
 import traceback
 
 from taichi.core.util import ti_core as _ti_core
-from taichi.lang import impl
+from taichi.lang import impl, matrix
 from taichi.lang.exception import TaichiSyntaxError
 from taichi.lang.expr import Expr, make_expr_group
 from taichi.lang.util import cook_dtype, is_taichi_class, taichi_scope
-from taichi.lang import matrix
 
 unary_ops = []
 
@@ -573,9 +572,8 @@ def rescale_index(a, b, I):
             f"second arguement must be a field"
     assert isinstance(I, matrix.Matrix) and not I.is_global(), \
             f"third arguement must be a grouped index"
-    assert len(a.shape) >= len(b.shape)
     Ib = I.copy()
-    for n in range(len(b.shape)):
+    for n in range(min(I.n, min(len(a.shape), len(b.shape)))):
         if a.shape[n] > b.shape[n]:
             Ib.entries[n] = I.entries[n] // (a.shape[n] // b.shape[n])
         if a.shape[n] < b.shape[n]:
