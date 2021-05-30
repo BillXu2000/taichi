@@ -118,6 +118,8 @@ public:
         stack<CellNode*> eles;
         stack<string> ops;
         map<string, int> precedence;
+        precedence["*"] = 5;
+        precedence["/"] = 5;
         precedence["+"] = 6;
         precedence["-"] = 6;
         precedence["=="] = 10;

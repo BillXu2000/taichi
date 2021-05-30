@@ -103,6 +103,8 @@ public:
         if (p->children.size() == 2) {
             if (p->token == "+") return builder->create_add(gen(p->children[0]), gen(p->children[1]));
             if (p->token == "-") return builder->create_sub(gen(p->children[0]), gen(p->children[1]));
+            if (p->token == "*") return builder->create_mul(gen(p->children[0]), gen(p->children[1]));
+            if (p->token == "/") return builder->create_div(gen(p->children[0]), gen(p->children[1]));
             if (p->token == "&") return builder->create_and(gen(p->children[0]), gen(p->children[1]));
             if (p->token == "|") return builder->create_or(gen(p->children[0]), gen(p->children[1])); // same as ||
             if (p->token == "||") return builder->create_or(gen(p->children[0]), gen(p->children[1]));
@@ -140,11 +142,11 @@ void game_of_life(CellNode *cell_root, int argc, char *argv[]) {
     const int N = 512, M = 16;
     std::vector<Index> index_dense = {0, 1};
     std::vector<int> size_dense = {M, M};
-    auto &pointer = root->pointer(vector<Index>{0, 1}, vector<int>{N / M, N / M}).dense(index_dense, size_dense);
+    auto &pointer = root->pointer({0, 1}, {N / M + 0, N / M + 0}).dense(index_dense, size_dense);
     auto &alive = pointer.insert_children(SNodeType::place);
     //auto &alive = root->dense(index_dense, size_dense).insert_children(SNodeType::place);
     alive.dt = PrimitiveType::i32;
-    auto &next = root->pointer(vector<Index>{0, 1}, vector<int>{N / M, N / M}).dense(index_dense, size_dense).insert_children(SNodeType::place);
+    auto &next = root->pointer(vector<Index>{0, 1}, vector<int>{N / M + 0, N / M + 0}).dense(index_dense, size_dense).insert_children(SNodeType::place);
     //auto &next = root->dense(index_dense, size_dense).insert_children(SNodeType::place);
     next.dt = PrimitiveType::i32;
 
@@ -198,8 +200,8 @@ void game_of_life(CellNode *cell_root, int argc, char *argv[]) {
             }
         }
         else {
-            auto *left = builder.get_int32(M / 2 * N);
-            auto *right = builder.get_int32(M / 2 * N + N);
+            auto *left = builder.get_int32(1);
+            auto *right = builder.get_int32(N - 1);
             auto *loop_x = builder.create_range_for(left, right, 1, 0, 4);
             {
                 auto _ = builder.get_loop_guard(loop_x);
@@ -213,8 +215,8 @@ void game_of_life(CellNode *cell_root, int argc, char *argv[]) {
                     //Stmt *ans = (BH(cnt) * builder.get_int32(9287) % mod + mod) % builder.get_int32(2);
                     //Stmt *rnd = ((BH(cnt) * builder.get_int32(9287) % mod + mod) % builder.get_int32(16));
                     //Stmt *rnd = BH(builder.insert(make_unique<RandStmt>(PrimitiveType::i32))) % builder.get_int32(16);
-                    Stmt *rnd = BH(builder.create_rand(PrimitiveType::i32)) % builder.get_int32(2);
-                    Stmt *ans = (BH(x) > builder.get_int32(M / 2 * N + N / 2) | BH(y) > builder.get_int32(M / 2 * N + N / 2)) & rnd & (BH(rnd) < builder.get_int32(16));
+                    Stmt *rnd = BH(builder.create_rand(PrimitiveType::i32)) % builder.get_int32(16);
+                    Stmt *ans = (BH(x) > builder.get_int32(N / 2) | BH(y) > builder.get_int32(N / 2)) & rnd & (BH(rnd) < builder.get_int32(16));
                     vector<Stmt *> indices = {x, y};
                     builder.create_global_store(builder.create_global_ptr(&alive, indices), ans);
                 }
@@ -236,15 +238,29 @@ void game_of_life(CellNode *cell_root, int argc, char *argv[]) {
             BH::global_indices.push_back(x);
             BH::global_indices.push_back(y);
             BH::symbol["output"] = builder.create_local_var(PrimitiveType::i32);
+            BH::symbol["boundary"] = builder.create_local_var(PrimitiveType::i32);
+            builder.create_local_store(BH::symbol["boundary"], ((x == builder.get_int32(1)) | (x == builder.get_int32(N - 2)) | (y == builder.get_int32(1)) | (y == builder.get_int32(N - 2))));
             BH::gen(cell_root);
             vector<Stmt *> indices = {x, y};
             //builder.create_global_store(builder.create_global_ptr(&next, indices), builder.create_local_load(BH::symbol["output"]));
             BH self = builder.create_global_load(builder.create_global_ptr(&alive, indices));
             BH ans = builder.create_local_load(BH::symbol["output"]);
-            /*ans = ans + ((BH(x) == builder.get_int32(M / 2 * N + N - 1)) & builder.get_int32(1) & ((BH(self) & builder.get_int32(4)) > builder.get_int32(0)));
-            ans = ans + ((BH(y) == builder.get_int32(M / 2 * N + N - 1)) & builder.get_int32(2) & ((BH(self) & builder.get_int32(8)) > builder.get_int32(0)));
-            ans = ans + ((BH(x) == builder.get_int32(M / 2 * N)) & builder.get_int32(4) & ((BH(self) & builder.get_int32(1)) > builder.get_int32(0)));
-            ans = ans + ((BH(y) == builder.get_int32(M / 2 * N)) & builder.get_int32(8) & ((BH(self) & builder.get_int32(2)) > builder.get_int32(0)));*/
+            /*ans = ans + ((BH(x) == builder.get_int32(N - 2)) & builder.get_int32(1) & ((BH(self) & builder.get_int32(4)) > builder.get_int32(0)));
+            ans = ans + ((BH(y) == builder.get_int32(N - 2)) & builder.get_int32(2) & ((BH(self) & builder.get_int32(8)) > builder.get_int32(0)));
+            ans = ans + ((BH(x) == builder.get_int32(1)) & builder.get_int32(4) & ((BH(self) & builder.get_int32(1)) > builder.get_int32(0)));
+            ans = ans + ((BH(y) == builder.get_int32(1)) & builder.get_int32(8) & ((BH(self) & builder.get_int32(2)) > builder.get_int32(0)));*/
+            /*{
+                auto *branch = builder.create_if((x == builder.get_int32(1)) |
+                                               (x == builder.get_int32(N - 2)) |
+                                               (y == builder.get_int32(1)) |
+                                               (y == builder.get_int32(N - 2)));
+                {
+                    auto _ = builder.get_if_guard(branch, true);
+                    BH value = ((ans & builder.get_int32(3)) * builder.get_int32(4)) | ((ans & builder.get_int32(12)) / builder.get_int32(4));
+                    builder.create_local_store(BH::symbol["output"], value);
+                }
+            }*/
+            ans = builder.create_local_load(BH::symbol["output"]);
             auto* branch = builder.create_if(self);
             {
                 auto _ = builder.get_if_guard(branch, true);
@@ -295,16 +311,22 @@ void game_of_life(CellNode *cell_root, int argc, char *argv[]) {
     {
         IRBuilder builder;
         BuilderHelperGuard _(builder);
-        auto *loop = builder.create_struct_for(&pointer, 1, 0, 4);
+        BH zero = builder.get_int32(1);
+        BH n = builder.get_int32(N - 1);
+        auto *loopx = builder.create_range_for(zero, n, 1, 0, 4);
         {
-            auto _ = builder.get_loop_guard(loop);
-            auto *x = builder.get_loop_index(loop, 0);
-            auto *y = builder.get_loop_index(loop, 1);
+        auto _ = builder.get_loop_guard(loopx);
+        auto *loopy = builder.create_range_for(zero, n, 1, 0, 4);
+        {
+            auto _ = builder.get_loop_guard(loopy);
+            auto *x = builder.get_loop_index(loopx, 0);
+            auto *y = builder.get_loop_index(loopy, 0);
             vector<Stmt *> indices = {x, y};
             builder.create_global_store(
                 builder.create_global_ptr(&alive, indices),
                 builder.create_global_load(
                     builder.create_global_ptr(&next, indices)));
+        }
         }
         kernel_swap = make_unique<Kernel>(program, builder.extract_ir(), "swap");
     }
@@ -349,7 +371,8 @@ void game_of_life(CellNode *cell_root, int argc, char *argv[]) {
                 builder.create_external_ptr(
                     builder.create_arg_load(0, PrimitiveType::i32, true),
                     vector<Stmt *>(1, BH(x) % builder.get_int32(N) * builder.get_int32(N) + BH(y) % builder.get_int32(N))),
-                BH(builder.create_global_load(builder.create_global_ptr(&alive, indices))) + builder.get_int32(2));
+                    builder.create_global_load(builder.create_global_ptr(&alive, indices)));
+                //BH(builder.create_global_load(builder.create_global_ptr(&alive, indices))) + builder.get_int32(2));
                 //builder.create_global_load(builder.create_global_ptr(&alive, indices)));
         }
         kernel_gui = make_unique<Kernel>(program, builder.extract_ir(), "gui");
@@ -373,16 +396,17 @@ void game_of_life(CellNode *cell_root, int argc, char *argv[]) {
         long long sum = 0;
         for (int i = 0; i < N; i++) {
             for (int j = 0; j < N; j++) {
-                float k = ans[i][j] & 1, z = (ans[i][j] & 2) * 0.2;
+                /*//float k = ans[i][j] * 0.25, z = (ans[i][j] & 2) * 0.2;
                 sum += ans[i][j];
-                std::array<taichi::real, 4> color{k, z, z, 1};
-                canvas.img[i][j] = taichi::Vector4(color);
-                /*float k = 0;
+                //std::array<taichi::real, 4> color{k, z, z, 1};
+                std::array<taichi::real, 4> color{k, 0, 0, 1};
+                canvas.img[i][j] = taichi::Vector4(color);*/
+                float k = 0;
                 for (int z = 0; z < 4; z++) {
                     if ((ans[i][j] >> z) & 1) k += 0.25;
                 }
                 std::array<taichi::real, 4> color{k, 0, 0, 1};
-                canvas.img[i][j] = taichi::Vector4(color);*/
+                canvas.img[i][j] = taichi::Vector4(color);
             }
         }
         string name = to_string(frame);
