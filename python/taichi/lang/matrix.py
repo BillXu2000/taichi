@@ -141,17 +141,17 @@ class Matrix(TaichiOperations):
                     "Declaring matrix fields using `ti.Matrix(n, m, dt, shape)` is no longer supported. "
                     "Use `ti.Matrix.field(n, m, dtype, shape)` instead.")
 
-        if self.n * self.m > 32 and not suppress_warning:
-            warning(
-                f'Taichi matrices/vectors with {self.n}x{self.m} > 32 entries are not suggested.'
-                ' Matrices/vectors will be automatically unrolled at compile-time for performance.'
-                ' So the compilation time could be extremely long if the matrix size is too big.'
-                ' You may use a field to store a large matrix like this, e.g.:\n'
-                f'    x = ti.field(ti.f32, ({self.n}, {self.m})).\n'
-                ' See https://docs.taichi.graphics/lang/articles/basic/field#matrix-size'
-                ' for more details.',
-                UserWarning,
-                stacklevel=2)
+        # if self.n * self.m > 32 and not suppress_warning:
+        #     warning(
+        #         f'Taichi matrices/vectors with {self.n}x{self.m} > 32 entries are not suggested.'
+        #         ' Matrices/vectors will be automatically unrolled at compile-time for performance.'
+        #         ' So the compilation time could be extremely long if the matrix size is too big.'
+        #         ' You may use a field to store a large matrix like this, e.g.:\n'
+        #         f'    x = ti.field(ti.f32, ({self.n}, {self.m})).\n'
+        #         ' See https://docs.taichi.graphics/lang/articles/basic/field#matrix-size'
+        #         ' for more details.',
+        #         UserWarning,
+        #         stacklevel=2)
 
     def element_wise_binary(self, foo, other):
         other = self.broadcast_copy(other)
