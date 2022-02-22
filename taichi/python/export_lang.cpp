@@ -30,6 +30,7 @@
 #include "taichi/program/sparse_matrix.h"
 #include "taichi/program/sparse_solver.h"
 #include "taichi/ir/mesh.h"
+#include "taichi/meshtaichi/patcher_api.h"
 
 #include "taichi/program/kernel_profiler.h"
 
@@ -1048,6 +1049,10 @@ void export_lang(py::module &m) {
           mesh_ptr.ptr->relations.insert(
               std::pair(type, mesh::MeshLocalRelation(value, offset)));
         });
+
+  m.def("meshtaichi_patch_obj", [](std::string obj_name, std::vector<std::string> relations, std::string json_name) {
+    MeshTaichi::run_obj(obj_name, relations, json_name);
+  });
 }
 
 TI_NAMESPACE_END

@@ -1,5 +1,4 @@
-#ifndef MESH_H
-#define MESH_H
+#pragma once
 
 #include <unordered_set>
 #include <unordered_map>
@@ -11,6 +10,8 @@
 #include <tuple>
 #include <algorithm>
 #include <assert.h>
+
+namespace MeshTaichi {
 
 enum class MeshTopology { Triangle = 3, Tetrahedron = 4 };
 
@@ -148,4 +149,4 @@ class Mesh {
 std::shared_ptr<Mesh> load_obj(std::string filename, bool shuffle=false);
 std::shared_ptr<Mesh> load_tet(std::string filename, bool shuffle=false);
 
-#endif
+}

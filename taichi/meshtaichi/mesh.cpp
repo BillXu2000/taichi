@@ -1,4 +1,6 @@
-#include "mesh.h"
+#include "patcher_mesh.h"
+
+namespace MeshTaichi {
 
 std::string element_type_name(MeshElementType type) {
   if (type == MeshElementType::Vertex)
@@ -251,4 +253,6 @@ std::shared_ptr<Mesh> load_tet(std::string filename, bool shuffle) {
   mesh->num_elements.insert(std::make_pair(MeshElementType::Face, num_faces));
 
   return mesh;
+}
+
 }

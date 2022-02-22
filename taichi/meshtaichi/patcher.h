@@ -1,5 +1,4 @@
-#ifndef PATCHER_H
-#define PATCHER_H
+#pragma once
 
 #include <algorithm>
 #include <random>
@@ -7,7 +6,9 @@
 #include <fstream>
 #include <ctime>
 #include <set>
-#include "mesh.h"
+#include "patcher_mesh.h"
+
+namespace MeshTaichi {
 
 class Patcher {
  public:
@@ -147,4 +148,4 @@ class Patcher {
   }
 };
 
-#endif
+}

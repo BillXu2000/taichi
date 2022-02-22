@@ -3,6 +3,8 @@
 #include <set>
 #include <cassert>
 
+namespace MeshTaichi {
+
 void Patcher::initialize(int _desired_size) {
   desired_size = _desired_size;
   num_seeds = (get_element_num() + desired_size - 1) / desired_size / 4;
@@ -587,4 +589,5 @@ void Patcher::export_json(std::string filename,
 
   out << "}";
   out.close();
+}
 }

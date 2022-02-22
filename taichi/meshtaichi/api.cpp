@@ -2,7 +2,9 @@
 #include <string>
 #include <map>
 #include <vector>
-#include "patcher.h"
+#include "patcher_api.h"
+
+namespace MeshTaichi {
 
 using RT = MeshRelationType;
 using ET = MeshElementType;
@@ -97,4 +99,26 @@ int main_ra(int argc, char* argv[]) {
     Patcher::run(mesh, stoi(args["patch_size"]), {ET::Edge, ET::Vertex}, {RT::EV, RT::VE, RT::VV}, args["output"]);
   }
   return 0;
+}
+
+void run_obj(std::string obj_name, std::vector<std::string> relations, std::string json_name) {
+  std::map<char, int> name2dim;
+  name2dim['v'] = 0;
+  name2dim['e'] = 1;
+  name2dim['f'] = 2;
+  name2dim['c'] = 3;
+  std::shared_ptr<Mesh> mesh;
+  bool shuffle = false;
+  mesh = load_obj(obj_name, shuffle);
+  std::vector<RT> rt_arr;
+  std::vector<ET> et_arr;
+  for (std::string str : relations) {
+    rt_arr.push_back(RT(name2dim[str[0]] * 4 + name2dim[str[1]]));
+    et_arr.push_back(ET(name2dim[str[0]]));
+    et_arr.push_back(ET(name2dim[str[1]]));
+  }
+  int patch_size = 256;
+  Patcher::run(mesh, patch_size, et_arr, rt_arr, json_name);
+}
+
 }
