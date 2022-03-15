@@ -12,7 +12,8 @@ parser.add_argument('--exp',
 parser.add_argument('--dim', type=int, default=3)
 parser.add_argument('--gui', choices=['auto', 'ggui', 'cpu'], default='auto')
 #parser.add_argument('--mesh', default=None)
-parser.add_argument('--mesh', default='/media/hdd/model/scale/bunny/bunny0.1.node')
+#parser.add_argument('--mesh', default='/media/hdd/model/scale/bunny/bunny0.1.node')
+parser.add_argument('--mesh', default='/media/hdd/model/scale/armadillo/armadillo0.1.node')
 parser.add_argument('place_holder', nargs='*')
 args = parser.parse_args()
 
@@ -158,6 +159,8 @@ m = ti.field(dtype=ti.f32, shape=n_verts)
 B = ti.Matrix.field(args.dim, args.dim, dtype=ti.f32, shape=n_cells)
 W = ti.field(dtype=ti.f32, shape=n_cells)
 
+gravity = ti.Vector.field(3, dtype=ti.f32, shape=())
+
 @ti.func
 def Ds(verts):
     return ti.Matrix.cols([x[verts[i]] - x[verts[3]] for i in range(3)])
@@ -195,7 +198,7 @@ def get_force():
     for c in vertices:
         get_force_func(c, vertices[c])
     for u in f:
-        f[u].y -= 9.8 * m[u]
+        f[u] += gravity[None] * m[u]
 
 
 @ti.kernel
@@ -289,6 +292,7 @@ def advect():
 
 @ti.kernel
 def init():
+    gravity[None] = [0, -9.8, 0]
     for u in x:
         x[u] = ox[u]
         v[u] = [0.0] * 3
@@ -307,12 +311,12 @@ def floor_bound():
         for i in ti.static(range(3)):
             if x[u][i] < -1:
                 x[u][i] = -1
-                if v[u].y < 0:
-                    v[u].y = 0
+                if v[u][i] < 0:
+                    v[u][i] = 0
             if x[u][i] > 1:
                 x[u][i] = 1
-                if v[u].y > 0:
-                    v[u].y = 0
+                if v[u][i] > 0:
+                    v[u][i] = 0
 
 
 
@@ -331,6 +335,23 @@ def substep():
 if __name__ == '__main__':
     init()
 
+    def handle_interaction(window):
+        #print(window.event)
+        gravity[None] = [0] * 3
+        if window.is_pressed('i'):
+            gravity[None] = [0, 0, -9.8]
+        if window.is_pressed('k'):
+            gravity[None] = [0, 0, 9.8]
+        if window.is_pressed('o'):
+            gravity[None] = [0, 9.8, 0]
+        if window.is_pressed('u'):
+            gravity[None] = [0, -9.8, 0]
+        if window.is_pressed('l'):
+            gravity[None] = [9.8, 0, 0]
+        if window.is_pressed('j'):
+            gravity[None] = [-9.8, 0, 0]
+
+
     if args.gui == 'ggui':
         res = (800, 600)
         window = ti.ui.Window("Implicit FEM", res, vsync=True)
@@ -339,7 +360,7 @@ if __name__ == '__main__':
         canvas = window.get_canvas()
         scene = ti.ui.Scene()
         camera = ti.ui.make_camera()
-        camera.position(2.0, 2.0, 3.95)
+        camera.position(0.0, 2.0, 3.95)
         camera.lookat(0.5, 0.5, 0.5)
         camera.fov(55)
 
@@ -366,6 +387,7 @@ if __name__ == '__main__':
                 init()
             if window.is_pressed(ti.GUI.ESCAPE):
                 break
+            handle_interaction(window)
 
             render()
 
@@ -392,6 +414,7 @@ if __name__ == '__main__':
                 if gui.event.key in [ti.GUI.ESCAPE, ti.GUI.EXIT]: break
             if gui.is_pressed('r'):
                 init()
+            handle_interaction(gui)
             gui.clear(0x000000)
             gui.circles(T(x.to_numpy() / 3), radius=1.5, color=0xba543a)
             gui.show()
