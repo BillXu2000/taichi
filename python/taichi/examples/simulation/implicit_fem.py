@@ -1,4 +1,4 @@
-import argparse
+import argparse, re
 
 import numpy as np
 from taichi._lib import core as _ti_core
@@ -11,6 +11,8 @@ parser.add_argument('--exp',
                     default='implicit')
 parser.add_argument('--dim', type=int, default=3)
 parser.add_argument('--gui', choices=['auto', 'ggui', 'cpu'], default='auto')
+#parser.add_argument('--mesh', default=None)
+parser.add_argument('--mesh', default='/media/hdd/model/scale/bunny/bunny0.1.node')
 parser.add_argument('place_holder', nargs='*')
 args = parser.parse_args()
 
@@ -22,58 +24,139 @@ if args.gui == 'auto':
     else:
         args.gui = 'cpu'
 
+if args.mesh is None: # generate a 5 * 5 * 5 cube
+    n_cube = np.array([5] * 3)
+
+    n_verts = np.product(n_cube)
+    n_cells = 5 * np.product(n_cube - 1)
+    dx = 1 / (n_cube.max() - 1)
+
+    vertices = ti.Vector.field(4, dtype=ti.i32, shape=n_cells)
+    ox = ti.Vector.field(args.dim, dtype=ti.f32, shape=n_verts)
+
+    su = 0
+    for i in range(3):
+        su += (n_cube[i] - 1) * (n_cube[(i + 1) % 3] - 1)
+    indices = ti.field(ti.i32, shape=2 * su * 2 * 3)
+
+
+    @ti.func
+    def i2p(I):
+        return (I.x * n_cube[1] + I.y) * n_cube[2] + I.z
+
+    @ti.func
+    def set_element(e, I, verts):
+        for i in ti.static(range(args.dim + 1)):
+            vertices[e][i] = i2p(I + (([verts[i] >> k for k in range(3)] ^ I) & 1))
+
+
+    @ti.kernel
+    def get_vertices():
+        '''
+        This kernel partitions the cube into tetrahedrons.
+        Each unit cube is divided into 5 tetrahedrons.
+        '''
+        for I in ti.grouped(ti.ndrange(*(n_cube - 1))):
+            e = ((I.x * (n_cube[1] - 1) + I.y) * (n_cube[2] - 1) + I.z) * 5
+            for i, j in ti.static(enumerate([0, 3, 5, 6])):
+                set_element(e + i, I, (j, j ^ 1, j ^ 2, j ^ 4))
+            set_element(e + 4, I, (1, 2, 4, 7))
+        for I in ti.grouped(ti.ndrange(*(n_cube))):
+            ox[i2p(I)] = I * dx
+
+    @ti.func
+    def check(u):
+        ans = 0
+        rest = u
+        for i in ti.static(range(3)):
+            k = rest % n_cube[2 - i]
+            rest = rest // n_cube[2 - i]
+            if k == 0: ans |= (1 << (i * 2))
+            if k == n_cube[2 - i] - 1: ans |= (1 << (i * 2 + 1))
+        return ans
+
+
+
+    @ti.kernel
+    def get_indices():
+        # calculate all the meshes on surface
+        cnt = 0
+        for c in vertices:
+            if c % 5 != 4:
+                for i in ti.static([0, 2, 3]):
+                    verts = [vertices[c][(i + j) % 4] for j in range(3)]
+                    sum = check(verts[0]) & check(verts[1]) & check(verts[2])
+                    if sum:
+                        m = ti.atomic_add(cnt, 1)
+                        det = ti.Matrix.rows([
+                            ox[verts[i]] - [0.5, 0.5, 0.5] for i in range(3)
+                        ]).determinant()
+                        if det < 0:
+                            tmp = verts[1]
+                            verts[1] = verts[2]
+                            verts[2] = tmp
+                        indices[m * 3] = verts[0]
+                        indices[m * 3 + 1] = verts[1]
+                        indices[m * 3 + 2] = verts[2]
+
+
+    get_vertices()
+    get_indices()
+else: # read mesh from tetgen output file
+    res = re.search(r'^(.+)\.(\w+)$', args.mesh)
+    if res is not None and res.group(2) in ['node', 'ele', 'face']:
+        args.mesh = res.group(1)
+    def read_np(filename, dim):
+        with open(filename, 'r') as fi:
+            data = fi.readlines()
+            n = int(re.findall(r'\S+', data[0])[0])
+            array_np = []
+            for line in data[1: n + 1]:
+                xs = re.findall(r'\S+', line)[1: dim + 1]
+                if filename[-4:] == 'face': xs[0], xs[1] = xs[1], xs[0] # flip the face
+                if filename[-4:] == 'node': array_np.append([float(i) for i in xs])
+                else : array_np.append([int(i) for i in xs])
+            return [n, np.array(array_np)]
+
+    n_verts, array_np = read_np(f'{args.mesh}.node', 3)
+    ma = 0
+    for i in range(3):
+        array_np[:, i] -= array_np[:, i].min()
+        ma = max(ma, array_np[:, i].max())
+    array_np /= ma
+    ox = ti.Vector.field(args.dim, dtype=ti.f32, shape=n_verts)
+    ox.from_numpy(array_np)
+
+    n_cells, array_np = read_np(f'{args.mesh}.ele', 4)
+    vertices = ti.Vector.field(4, dtype=ti.i32, shape=n_cells)
+    vertices.from_numpy(array_np)
+
+    n_faces, array_np = read_np(f'{args.mesh}.face', 3)
+    indices = ti.field(ti.i32, shape=n_faces * 3)
+    indices.from_numpy(array_np.reshape(-1))
+
+
 E, nu = 5e4, 0.0
 mu, la = E / (2 * (1 + nu)), E * nu / ((1 + nu) * (1 - 2 * nu))  # lambda = 0
 density = 1000.0
-dt = 2e-4
+dt_explicit = 2e-4
+dt_implicit = 1e-2
+num_substep = int(dt_implicit / dt_explicit + 0.5)
 
 if args.exp == 'implicit':
-    dt = 1e-2
+    dt = dt_implicit
 
-n_cube = np.array([5] * 3)
-n_verts = np.product(n_cube)
-n_cells = 5 * np.product(n_cube - 1)
-dx = 1 / (n_cube.max() - 1)
-
-vertices = ti.Vector.field(4, dtype=ti.i32, shape=n_cells)
+if args.exp == 'explicit':
+    dt = dt_explicit
 
 x = ti.Vector.field(args.dim, dtype=ti.f32, shape=n_verts)
-ox = ti.Vector.field(args.dim, dtype=ti.f32, shape=n_verts)
 v = ti.Vector.field(args.dim, dtype=ti.f32, shape=n_verts)
 f = ti.Vector.field(args.dim, dtype=ti.f32, shape=n_verts)
 mul_ans = ti.Vector.field(args.dim, dtype=ti.f32, shape=n_verts)
 m = ti.field(dtype=ti.f32, shape=n_verts)
 
-n_cells = (n_cube - 1).prod() * 5
 B = ti.Matrix.field(args.dim, args.dim, dtype=ti.f32, shape=n_cells)
 W = ti.field(dtype=ti.f32, shape=n_cells)
-
-
-@ti.func
-def i2p(I):
-    return (I.x * n_cube[1] + I.y) * n_cube[2] + I.z
-
-
-@ti.func
-def set_element(e, I, verts):
-    for i in ti.static(range(args.dim + 1)):
-        vertices[e][i] = i2p(I + (([verts[i] >> k for k in range(3)] ^ I) & 1))
-
-
-@ti.kernel
-def get_vertices():
-    '''
-    This kernel partitions the cube into tetrahedrons.
-    Each unit cube is divided into 5 tetrahedrons.
-    '''
-    for I in ti.grouped(ti.ndrange(*(n_cube - 1))):
-        e = ((I.x * (n_cube[1] - 1) + I.y) * (n_cube[2] - 1) + I.z) * 5
-        for i, j in ti.static(enumerate([0, 3, 5, 6])):
-            set_element(e + i, I, (j, j ^ 1, j ^ 2, j ^ 4))
-        set_element(e + 4, I, (1, 2, 4, 7))
-    for I in ti.grouped(ti.ndrange(*(n_cube))):
-        ox[i2p(I)] = I * dx
-
 
 @ti.func
 def Ds(verts):
@@ -217,63 +300,26 @@ def init():
         W[c] = ti.abs(F.determinant()) / 6
         for i in range(4):
             m[vertices[c][i]] += W[c] / 4 * density
-    for u in x:
-        x[u].y += 1.0
-
 
 @ti.kernel
 def floor_bound():
     for u in x:
-        if x[u].y < 0:
-            x[u].y = 0
-            if v[u].y < 0:
-                v[u].y = 0
+        for i in ti.static(range(3)):
+            if x[u][i] < -1:
+                x[u][i] = -1
+                if v[u].y < 0:
+                    v[u].y = 0
+            if x[u][i] > 1:
+                x[u][i] = 1
+                if v[u].y > 0:
+                    v[u].y = 0
 
 
-@ti.func
-def check(u):
-    ans = 0
-    rest = u
-    for i in ti.static(range(3)):
-        k = rest % n_cube[2 - i]
-        rest = rest // n_cube[2 - i]
-        if k == 0: ans |= (1 << (i * 2))
-        if k == n_cube[2 - i] - 1: ans |= (1 << (i * 2 + 1))
-    return ans
-
-
-su = 0
-for i in range(3):
-    su += (n_cube[i] - 1) * (n_cube[(i + 1) % 3] - 1)
-indices = ti.field(ti.i32, shape=2 * su * 2 * 3)
-
-
-@ti.kernel
-def get_indices():
-    # calculate all the meshes on surface
-    cnt = 0
-    for c in vertices:
-        if c % 5 != 4:
-            for i in ti.static([0, 2, 3]):
-                verts = [vertices[c][(i + j) % 4] for j in range(3)]
-                sum = check(verts[0]) & check(verts[1]) & check(verts[2])
-                if sum:
-                    m = ti.atomic_add(cnt, 1)
-                    det = ti.Matrix.rows([
-                        x[verts[i]] - [0.5, 1.5, 0.5] for i in range(3)
-                    ]).determinant()
-                    if det < 0:
-                        tmp = verts[1]
-                        verts[1] = verts[2]
-                        verts[2] = tmp
-                    indices[m * 3] = verts[0]
-                    indices[m * 3 + 1] = verts[1]
-                    indices[m * 3 + 2] = verts[2]
 
 
 def substep():
     if args.exp == 'explicit':
-        for i in range(10):
+        for i in range(num_substep):
             get_force()
             advect()
     else:
@@ -283,9 +329,7 @@ def substep():
 
 
 if __name__ == '__main__':
-    get_vertices()
     init()
-    get_indices()
 
     if args.gui == 'ggui':
         res = (800, 600)
