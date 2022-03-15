@@ -136,6 +136,39 @@ else: # read mesh from tetgen output file
     indices = ti.field(ti.i32, shape=n_faces * 3)
     indices.from_numpy(array_np.reshape(-1))
 
+edges = None
+c2e = ti.Vector.field(6, dtype=ti.i32, shape=n_cells)
+def generate_edges():
+    global edges
+    vertices_np = vertices.to_numpy()
+    edges_np = set()
+    for i in vertices_np:
+        for u in i:
+            for v in i:
+                if u < v:
+                    edges_np.add((u, v))
+    edges_np = sorted(edges_np)
+    edges = ti.Vector.field(2, dtype=ti.i32, shape=len(edges_np))
+    edges.from_numpy(np.array(list(edges_np)))
+    map = {}
+    for i, j in enumerate(edges_np):
+        map[j] = i
+    c2e_np = []
+    for i in vertices_np:
+        tmp = []
+        for u in i:
+            for v in i:
+                if u < v:
+                    tmp.append(map[(u, v)])
+        c2e_np.append(tmp)
+    c2e_np = np.array(c2e_np)
+    c2e.from_numpy(c2e_np)
+
+generate_edges()
+hes_edge = ti.Matrix.field(3, 3, dtype=ti.f32, shape=edges.shape)
+hes_vert = ti.Matrix.field(3, 3, dtype=ti.f32, shape=ox.shape)
+hes_edge.fill(0)
+hes_vert.fill(0)
 
 E, nu = 5e4, 0.0
 mu, la = E / (2 * (1 + nu)), E * nu / ((1 + nu) * (1 - 2 * nu))  # lambda = 0
@@ -202,6 +235,44 @@ def get_force():
 
 
 @ti.kernel
+def get_matrix():
+    for c in vertices:
+        verts = vertices[c]
+        W_c = W[c]
+        B_c = B[c]
+        hes = ti.Matrix.zero(ti.f32, 12, 12)
+        for u in range(4):
+            for d in range(3):
+                dD = ti.Matrix.zero(ti.f32, 3, 3)
+                if u == 3:
+                    for j in range(3):
+                        dD[d, j] = -1
+                else:
+                    dD[d, u] = 1
+                dF = dD @ B_c
+                dP = 2.0 * mu * dF
+                dH = -W_c * dP @ B_c.transpose()
+                for i in range(3):
+                    for j in range(3):
+                        hes[i * 3 + j, u * 3 + d] = -dt**2 * dH[j, i]
+                        hes[3 * 3 + j, u * 3 + d] += dt**2 * dH[j, i]
+
+        z = 0
+        for u_i in range(4):
+            u = verts[u_i]
+            for v_i in range(4):
+                v = verts[v_i]
+                if u < v:
+                    for i in ti.static(range(3)):
+                        for j in ti.static(range(3)):
+                            hes_edge[c2e[c][z]][i, j] += hes[u_i * 3 + i, v_i * 3 + j] 
+                    z += 1
+        for zz in range(4):
+            for i in ti.static(range(3)):
+                for j in ti.static(range(3)):
+                    hes_vert[verts[zz]][i, j] += hes[zz * 3 + i, zz * 3 + j]
+
+@ti.kernel
 def matmul_cell(ret: ti.template(), vel: ti.template()):
     for i in ret:
         ret[i] = vel[i] * m[i]
@@ -224,6 +295,16 @@ def matmul_cell(ret: ti.template(), vel: ti.template()):
                     for j in range(3):
                         tmp = (vel[verts[i]][j] - vel[verts[3]][j])
                         ret[verts[u]][d] += -dt**2 * dH[j, i] * tmp
+
+@ti.kernel
+def matmul_edge(ret: ti.template(), vel: ti.template()):
+    for i in ret:
+        ret[i] = vel[i] * m[i] + hes_vert[i] @ vel[i]
+    for e in edges:
+        u = edges[e][0]
+        v = edges[e][1]
+        ret[u] += hes_edge[e] @ vel[v]
+        ret[v] += hes_edge[e].transpose() @ vel[u]
 
 
 @ti.kernel
@@ -253,7 +334,8 @@ def get_b():
 
 def cg():
     def mul(x):
-        matmul_cell(mul_ans, x)
+        #matmul_cell(mul_ans, x)
+        matmul_edge(mul_ans, x)
         return mul_ans
 
     get_force()
@@ -334,6 +416,7 @@ def substep():
 
 if __name__ == '__main__':
     init()
+    get_matrix()
 
     def handle_interaction(window):
         #print(window.event)
