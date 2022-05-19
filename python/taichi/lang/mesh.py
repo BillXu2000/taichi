@@ -378,24 +378,6 @@ class MeshInstance:
         return _ti_core.get_relation_access(self.mesh_ptr, from_index.ptr,
                                             to_element_type, neighbor_idx_ptr)
 
-    def update_relation(self, from_order, to_order):
-        rel_type = MeshRelationType(relation_by_orders(from_order, to_order))
-        if rel_type not in self.relation_set:
-            meta = self.patcher.get_relation_meta(from_order, to_order)
-
-            def fun(arr, dtype):
-                field = impl.field(dtype=dtype, shape=arr.shape)
-                field.from_numpy(arr)
-                return field
-
-            if from_order <= to_order:
-                self.set_relation_dynamic(rel_type, fun(meta["value"], u16),
-                                          fun(meta["patch_offset"], u32),
-                                          fun(meta["offset"], u16))
-            else:
-                self.set_relation_fixed(rel_type, fun(meta["value"], u16))
-
-
 class MeshMetadata:
     def __init__(self, data):
         self.num_patches = data["num_patches"]
