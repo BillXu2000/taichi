@@ -204,10 +204,9 @@ SNodeTree *Program::add_snode_tree(std::unique_ptr<SNode> root,
   auto tree = std::make_unique<SNodeTree>(id, std::move(root));
   tree->root()->set_snode_tree_id(id);
   if (compile_only) {
-    program_impl_->compile_snode_tree_types(tree.get(), snode_trees_);
+    program_impl_->compile_snode_tree_types(tree.get());
   } else {
-    program_impl_->materialize_snode_tree(tree.get(), snode_trees_,
-                                          result_buffer);
+    program_impl_->materialize_snode_tree(tree.get(), result_buffer);
   }
   if (id < snode_trees_.size()) {
     snode_trees_[id] = std::move(tree);
@@ -243,6 +242,10 @@ void Program::synchronize() {
     }
     sync = true;
   }
+}
+
+StreamSemaphore Program::flush() {
+  return program_impl_->flush();
 }
 
 void Program::async_flush() {

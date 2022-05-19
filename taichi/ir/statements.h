@@ -690,13 +690,13 @@ class PrintStmt : public Stmt {
   }
 
   template <typename... Args>
-  PrintStmt(Stmt *t, Args &&... args)
+  PrintStmt(Stmt *t, Args &&...args)
       : contents(make_entries(t, std::forward<Args>(args)...)) {
     TI_STMT_REG_FIELDS;
   }
 
   template <typename... Args>
-  PrintStmt(const std::string &str, Args &&... args)
+  PrintStmt(const std::string &str, Args &&...args)
       : contents(make_entries(str, std::forward<Args>(args)...)) {
     TI_STMT_REG_FIELDS;
   }
@@ -711,13 +711,13 @@ class PrintStmt : public Stmt {
   template <typename T, typename... Args>
   static void make_entries_helper(std::vector<PrintStmt::EntryType> &entries,
                                   T &&t,
-                                  Args &&... values) {
+                                  Args &&...values) {
     entries.push_back(EntryType{t});
     make_entries_helper(entries, std::forward<Args>(values)...);
   }
 
   template <typename... Args>
-  static std::vector<EntryType> make_entries(Args &&... values) {
+  static std::vector<EntryType> make_entries(Args &&...values) {
     std::vector<EntryType> ret;
     make_entries_helper(ret, std::forward<Args>(values)...);
     return ret;
@@ -895,6 +895,26 @@ class FuncCallStmt : public Stmt {
   }
 
   TI_STMT_DEF_FIELDS(ret_type, func, args);
+  TI_DEFINE_ACCEPT_AND_CLONE
+};
+
+/**
+ * A reference to a variable.
+ */
+class ReferenceStmt : public Stmt {
+ public:
+  Stmt *var;
+  bool global_side_effect{false};
+
+  ReferenceStmt(Stmt *var) : var(var) {
+    TI_STMT_REG_FIELDS;
+  }
+
+  bool has_global_side_effect() const override {
+    return global_side_effect;
+  }
+
+  TI_STMT_DEF_FIELDS(ret_type, var);
   TI_DEFINE_ACCEPT_AND_CLONE
 };
 

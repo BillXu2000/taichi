@@ -1,3 +1,4 @@
+import ast
 import json
 
 import numpy as np
@@ -6,11 +7,10 @@ from taichi.lang import impl
 from taichi.lang.enums import Layout
 from taichi.lang.exception import TaichiSyntaxError
 from taichi.lang.field import Field, ScalarField
-from taichi.lang.matrix import (MatrixField, _IntermediateMatrix,
-                                _MatrixFieldElement)
+from taichi.lang.matrix import Matrix, MatrixField, _MatrixFieldElement
 from taichi.lang.struct import StructField
 from taichi.lang.util import python_scope
-from taichi.types import i32, u16, u32
+from taichi.types import u16, u32
 from taichi.types.compound_types import CompoundType
 
 from taichi import lang
@@ -83,7 +83,7 @@ class MeshReorderedMatrixFieldProxy(MatrixField):
         self._initialize_host_accessors()
         key = self.g2r_field[key]
         key = self._pad_key(key)
-        return _IntermediateMatrix(self.n, self.m, self._host_access(key))
+        return Matrix(self._host_access(key), is_ref=True)
 
 
 class MeshElementField:
@@ -171,12 +171,21 @@ class MeshElementField:
             v.from_torch(array_dict[k])
 
     @python_scope
+    def from_paddle(self, array_dict):
+        for k, v in self._items:
+            v.from_paddle(array_dict[k])
+
+    @python_scope
     def to_numpy(self):
         return {k: v.to_numpy() for k, v in self._items}
 
     @python_scope
     def to_torch(self, device=None):
         return {k: v.to_torch(device=device) for k, v in self._items}
+
+    @python_scope
+    def to_paddle(self, place=None):
+        return {k: v.to_paddle(place=place) for k, v in self._items}
 
     @python_scope
     def __len__(self):
@@ -360,6 +369,32 @@ class MeshInstance:
                     self.set_relation_fixed(rel_type, fun(meta["value"], u16))
         self.new_relations.clear()
 
+    def get_relation_size(self, from_index, to_element_type):
+        return _ti_core.get_relation_size(self.mesh_ptr, from_index.ptr,
+                                          to_element_type)
+
+    def get_relation_access(self, from_index, to_element_type,
+                            neighbor_idx_ptr):
+        return _ti_core.get_relation_access(self.mesh_ptr, from_index.ptr,
+                                            to_element_type, neighbor_idx_ptr)
+
+    def update_relation(self, from_order, to_order):
+        rel_type = MeshRelationType(relation_by_orders(from_order, to_order))
+        if rel_type not in self.relation_set:
+            meta = self.patcher.get_relation_meta(from_order, to_order)
+
+            def fun(arr, dtype):
+                field = impl.field(dtype=dtype, shape=arr.shape)
+                field.from_numpy(arr)
+                return field
+
+            if from_order <= to_order:
+                self.set_relation_dynamic(rel_type, fun(meta["value"], u16),
+                                          fun(meta["patch_offset"], u32),
+                                          fun(meta["offset"], u16))
+            else:
+                self.set_relation_fixed(rel_type, fun(meta["value"], u16))
+
 
 class MeshMetadata:
     def __init__(self, data):
@@ -380,15 +415,15 @@ class MeshMetadata:
             element["g2r_mapping"] = np.array(element["g2r_mapping"])
             self.element_fields[element_type] = {}
             self.element_fields[element_type]["owned"] = impl.field(
-                dtype=i32, shape=self.num_patches + 1)
+                dtype=u32, shape=self.num_patches + 1)
             self.element_fields[element_type]["total"] = impl.field(
-                dtype=i32, shape=self.num_patches + 1)
+                dtype=u32, shape=self.num_patches + 1)
             self.element_fields[element_type]["l2g"] = impl.field(
-                dtype=i32, shape=element["l2g_mapping"].shape[0])
+                dtype=u32, shape=element["l2g_mapping"].shape[0])
             self.element_fields[element_type]["l2r"] = impl.field(
-                dtype=i32, shape=element["l2r_mapping"].shape[0])
+                dtype=u32, shape=element["l2r_mapping"].shape[0])
             self.element_fields[element_type]["g2r"] = impl.field(
-                dtype=i32, shape=element["g2r_mapping"].shape[0])
+                dtype=u32, shape=element["g2r_mapping"].shape[0])
 
         for relation in data["relations"]:
             from_order = relation["from_order"]
@@ -458,6 +493,8 @@ class MeshBuilder:
         self.elements = set()
         self.relations = set()
 
+        impl.current_cfg().use_mesh = True
+
     def build(self, metadata: MeshMetadata):
         """Build and instantiate mesh from model meta data
 
@@ -518,6 +555,8 @@ class MeshBuilder:
         
         instance.patcher = metadata.patcher
 
+        instance.patcher = metadata.patcher
+
         return instance
 
 
@@ -561,6 +600,55 @@ class Mesh:
     @staticmethod
     def generate_meta(data):
         return MeshMetadata(data)
+
+    class RelationVisitor(ast.NodeVisitor):
+        # TODO: only works for simple cases
+
+        def __init__(self, ctx):
+            self.vars = {}
+            self.visits = []
+            self.ctx = ctx
+
+        def visit_For(self, node):
+            if isinstance(node.iter, ast.Attribute):
+                value = node.iter.value
+                if isinstance(value, ast.Name):
+                    if value.id in self.ctx.global_vars:
+                        var = self.ctx.global_vars[value.id]
+                        if isinstance(var, MeshInstance):
+                            self.vars[node.target.id] = [var, node.iter.attr]
+            if isinstance(node.iter, ast.Name):
+                if node.iter.id in self.ctx.global_vars:
+                    var = self.ctx.global_vars[node.iter.id]
+                    if isinstance(var, MeshElementField):
+                        self.vars[node.target.id] = [
+                            var.mesh, element_type_name(var._type)
+                        ]
+            ast.NodeVisitor.generic_visit(self, node)
+
+        def visit_Assign(self, node):
+            if isinstance(node.targets[0], ast.Name):
+                if isinstance(node.value, ast.Name):
+                    if node.value.id in self.vars:
+                        self.vars[node.targets[0].id] = self.vars[
+                            node.value.id]
+            ast.NodeVisitor.generic_visit(self, node)
+
+        def visit_Attribute(self, node):
+            if isinstance(node.value, ast.Name):
+                if node.value.id in self.vars:
+                    self.visits.append(self.vars[node.value.id] + [node.attr])
+            ast.NodeVisitor.generic_visit(self, node)
+
+    @staticmethod
+    def update_relation(tree, ctx):
+        x = Mesh.RelationVisitor(ctx)
+        x.visit(tree)
+        name_to_order = {"verts": 0, "edges": 1, "faces": 2, "cells": 3}
+        for visit in x.visits:
+            if visit[1] in name_to_order and visit[2] in name_to_order:
+                visit[0].update_relation(name_to_order[visit[1]],
+                                         name_to_order[visit[2]])
 
 
 def TriMesh():
