@@ -350,7 +350,6 @@ class MeshInstance:
                 relation_by_orders(from_order, to_order))
             if rel_type not in self.relation_set:
                 meta = self.patcher.get_relation_meta(from_order, to_order)
-                print('new relation')
                 def fun(arr, dtype):
                     field = impl.field(dtype=dtype, shape=arr.shape)
                     field.from_numpy(arr)
