@@ -387,27 +387,6 @@ class MeshInstance:
     def check_relation(self, from_order, to_order):
         self.new_relations.add((from_order, to_order))
 
-    def update_relation(self):
-        for from_order, to_order in self.new_relations:
-            rel_type = MeshRelationType(
-                relation_by_orders(from_order, to_order))
-            if rel_type not in self.relation_set:
-                meta = self.patcher.get_relation_meta(from_order, to_order)
-
-                def fun(arr, dtype):
-                    field = impl.field(dtype=dtype, shape=arr.shape)
-                    field.from_numpy(arr)
-                    return field
-
-                if from_order <= to_order:
-                    self.set_relation_dynamic(rel_type,
-                                              fun(meta["value"], u16),
-                                              fun(meta["patch_offset"], u32),
-                                              fun(meta["offset"], u16))
-                else:
-                    self.set_relation_fixed(rel_type, fun(meta["value"], u16))
-        self.new_relations.clear()
-
 
 class MeshMetadata:
     def __init__(self, data):
